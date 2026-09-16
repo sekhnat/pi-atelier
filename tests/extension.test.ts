@@ -8,7 +8,10 @@ import atelierExtension, {
 	type AtelierExtensionDependencies,
 } from "../extensions/index.js";
 import { AtelierEditor } from "../src/editor.js";
-import { loadConfig as loadAtelierConfig, saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
+import {
+	loadConfig as loadAtelierConfig,
+	type saveUserConfigPatch as persistConfigPatch,
+} from "../src/config.js";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -635,7 +638,7 @@ describe("extension registration", () => {
 	it("renders an inert Display workspace when retirement cannot remove its overlay", async () => {
 		const h = harness("tui", "linux", true);
 		await start(h);
-		const opening = command(h, "display");
+		void command(h, "display");
 		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
 		const displaySettings = h.overlays[1]!;
 		displaySettings.done.mockImplementation(() => {

@@ -131,7 +131,9 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 
 const sanitize = (text: string): string =>
 	text
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 		.replace(/[\u0000-\u001f\u007f]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim();

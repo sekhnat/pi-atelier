@@ -3,6 +3,7 @@ import { HStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
 
 const ENABLE_MOUSE = "\u001b[?1002h\u001b[?1006h";
 const DISABLE_MOUSE = "\u001b[?1006l\u001b[?1002l";
+// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 const SGR_MOUSE = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/;
 const PI_084_REGULAR_RENDER_ADAPTER = Symbol("pi-atelier.regular-render-adapter");
 const PI_084_FULLSCREEN_LAYOUT_ADAPTER = Symbol("pi-atelier.fullscreen-layout-adapter");
@@ -159,7 +160,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 	const isPiFullscreenRenderer = (): boolean => tui?.mode === "fullscreen" && isViewportTUI(tui);
 
 	const syncRegularRenderAdapter = () => {
-		if (!tui || tui.mode !== "regular") return;
+		if (tui?.mode !== "regular") return;
 		const adaptedTui = tui as AdaptedTui;
 		const currentState = adaptedTui[PI_084_REGULAR_RENDER_ADAPTER];
 		if (currentState?.owner === adapterOwner) return;

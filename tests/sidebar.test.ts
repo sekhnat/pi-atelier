@@ -19,7 +19,6 @@ import {
 	SIDEBAR_PANEL_MAX_ID_CHARS,
 	SIDEBAR_PANEL_MAX_PANELS,
 	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
@@ -30,6 +29,7 @@ import {
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
 import { type AtelierState, type SidebarPanelLayout, DEFAULT_CONFIG } from "../src/types.js";
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 const stripAnsi = (text: string) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 
 const theme = {

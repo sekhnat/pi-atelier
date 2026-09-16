@@ -133,14 +133,14 @@ const representativeState: FooterState = {
 	extensionStatuses: ["SYNC"],
 };
 
-function fit(text: string, width: number): string {
+function fitToWidth(text: string, width: number): string {
 	if (width <= 0) return "";
 	const clipped = truncateToWidth(text, width, "");
 	return `${clipped}${" ".repeat(Math.max(0, width - visibleWidth(clipped)))}`;
 }
 
 function panel(title: string, lines: string[], width: number, theme: ThemeLike, accent = false): string[] {
-	if (width < 4) return lines.map((line) => fit(line, width));
+	if (width < 4) return lines.map((line) => fitToWidth(line, width));
 	const inner = width - 2;
 	const color = accent ? "borderAccent" : "muted";
 	const edge = (text: string) => theme.fg(color, text);
@@ -148,7 +148,7 @@ function panel(title: string, lines: string[], width: number, theme: ThemeLike, 
 	const rule = Math.max(0, inner - visibleWidth(heading));
 	return [
 		`${edge("┌")}${theme.bold(theme.fg(accent ? "accent" : "muted", heading))}${edge("─".repeat(rule))}${edge("┐")}`,
-		...lines.map((line) => `${edge("│")}${fit(line, inner)}${edge("│")}`),
+		...lines.map((line) => `${edge("│")}${fitToWidth(line, inner)}${edge("│")}`),
 		`${edge("└")}${edge("─".repeat(inner))}${edge("┘")}`,
 	];
 }
@@ -167,7 +167,7 @@ function panelWithFocus(
 ): LayoutLine[] {
 	const withFocus = (line: string, focused: boolean | undefined): LayoutLine =>
 		focused === undefined ? { line } : { line, focused };
-	if (width < 4) return lines.map(({ line, focused }) => withFocus(fit(line, width), focused));
+	if (width < 4) return lines.map(({ line, focused }) => withFocus(fitToWidth(line, width), focused));
 	const inner = width - 2;
 	const edge = (text: string) => theme.fg("muted", text);
 	const heading = ` ${title} `;
@@ -176,7 +176,9 @@ function panelWithFocus(
 		{
 			line: `${edge("┌")}${theme.bold(theme.fg("muted", heading))}${edge("─".repeat(rule))}${edge("┐")}`,
 		},
-		...lines.map(({ line, focused }) => withFocus(`${edge("│")}${fit(line, inner)}${edge("│")}`, focused)),
+		...lines.map(({ line, focused }) =>
+			withFocus(`${edge("│")}${fitToWidth(line, inner)}${edge("│")}`, focused),
+		),
 		{ line: `${edge("└")}${edge("─".repeat(inner))}${edge("┘")}` },
 	];
 }
@@ -543,7 +545,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				);
 				editing = [
 					...left.map((leftLine, index) => ({
-						line: `${leftLine.line}  ${right[index]?.line ?? fit("", rightWidth)}`,
+						line: `${leftLine.line}  ${right[index]?.line ?? fitToWidth("", rightWidth)}`,
 						focused: Boolean(leftLine.focused || right[index]?.focused),
 					})),
 					{ line: "" },
@@ -579,27 +581,30 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			}
 			const content: LayoutLine[] = [
 				{
-					line: fit(
+					line: fitToWidth(
 						`${options.theme.bold("DISPLAY SETTINGS")}  ${options.theme.fg(sessionChanged ? "warning" : "success", status)}`,
 						outerInner,
 					),
 				},
 				{
-					line: fit(options.theme.fg("muted", "↑/↓ Select · Enter Change · S Save · Esc Close"), outerInner),
+					line: fitToWidth(
+						options.theme.fg("muted", "↑/↓ Select · Enter Change · S Save · Esc Close"),
+						outerInner,
+					),
 				},
 				{ line: "" },
 				...preview.map((line) => ({ line })),
 				{ line: "" },
 				...editing,
 				{ line: "" },
-				...(feedback ? [{ line: fit(feedback, outerInner) }] : []),
-				{ line: fit(guidance, outerInner) },
+				...(feedback ? [{ line: fitToWidth(feedback, outerInner) }] : []),
+				{ line: fitToWidth(guidance, outerInner) },
 			];
 			const border = (text: string) => options.theme.fg("borderAccent", text);
 			const frame = (lines: string[]): string[] =>
 				[
 					border(`╭${"─".repeat(outerInner)}╮`),
-					...lines.map((line) => `${border("│")}${fit(line, outerInner)}${border("│")}`),
+					...lines.map((line) => `${border("│")}${fitToWidth(line, outerInner)}${border("│")}`),
 					border(`╰${"─".repeat(outerInner)}╯`),
 				].map((line) => truncateToWidth(line, width, ""));
 
@@ -612,7 +617,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			// being resized, and returning no lines is safer than overflowing it.
 			const height = Math.max(0, Math.floor(viewportHeight));
 			if (height === 0) return [];
-			if (height === 1) return [fit(options.theme.bold("DISPLAY SETTINGS"), width)];
+			if (height === 1) return [fitToWidth(options.theme.bold("DISPLAY SETTINGS"), width)];
 
 			// Keep the heading, global key hints, and contextual guidance fixed. Only the
 			// central preview/editor content is virtualized so the frame is never clipped.
@@ -652,13 +657,13 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				// at least three central rows, so prioritize the focused edge.
 				if (selectedCentralLine <= 0) {
 					scrollOffset = 0;
-					centralLines = [central[0] ?? { line: "" }, { line: fit("↓ more", outerInner) }];
+					centralLines = [central[0] ?? { line: "" }, { line: fitToWidth("↓ more", outerInner) }];
 				} else if (selectedCentralLine >= central.length - 1) {
 					scrollOffset = central.length - 1;
-					centralLines = [{ line: fit("↑ more", outerInner) }, central[scrollOffset] ?? { line: "" }];
+					centralLines = [{ line: fitToWidth("↑ more", outerInner) }, central[scrollOffset] ?? { line: "" }];
 				} else {
 					scrollOffset = selectedCentralLine;
-					centralLines = [{ line: fit("↑ more", outerInner) }, central[scrollOffset] ?? { line: "" }];
+					centralLines = [{ line: fitToWidth("↑ more", outerInner) }, central[scrollOffset] ?? { line: "" }];
 				}
 			} else {
 				const topCapacity = centralRows - 1;
@@ -683,9 +688,9 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				const bodyCapacity = centralRows - (atTop ? 0 : 1) - (atBottom ? 0 : 1);
 				const body = central.slice(scrollOffset, scrollOffset + bodyCapacity);
 				centralLines = [
-					...(atTop ? [] : [{ line: fit("↑ more", outerInner) }]),
+					...(atTop ? [] : [{ line: fitToWidth("↑ more", outerInner) }]),
 					...body,
-					...(atBottom ? [] : [{ line: fit("↓ more", outerInner) }]),
+					...(atBottom ? [] : [{ line: fitToWidth("↓ more", outerInner) }]),
 				];
 			}
 

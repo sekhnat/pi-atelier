@@ -9,6 +9,7 @@ const plainTheme = {
 	bold: (text: string) => text,
 	italic: (text: string) => text,
 };
+// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
 
 const namedTheme = (name: string) => ({
@@ -292,6 +293,7 @@ describe("footer", () => {
 		);
 		expect(line).toContain(`${darkRgb.muted}read\u001b[39m ${darkRgb.dim}—\u001b[39m`);
 		expect(line).toContain(`${darkRgb.muted}hit\u001b[39m ${darkRgb.dim}—\u001b[39m`);
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 		expect(line).not.toMatch(/\u001b\[38;2;125;211;252m—/);
 	});
 

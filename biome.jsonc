@@ -1,0 +1,23 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"formatter": { "enabled": true, "indentStyle": "tab", "lineWidth": 110 },
+	"linter": { "enabled": true, "rules": { "preset": "recommended" } },
+	"files": {
+		"includes": ["**", "!node_modules", "!coverage", "!package-lock.json"]
+	},
+	// Test fixtures and partial fakes of Pi internals legitimately use `any`, and tests
+	// assert non-null after waitFor length checks; the recommended preset's
+	// noExplicitAny and noNonNullAssertion are relaxed for tests only. src/ stays fully checked.
+	"overrides": [
+		{
+			"includes": ["tests/**"],
+			"linter": {
+				"rules": {
+					"suspicious": { "noExplicitAny": "off" },
+					"style": { "noNonNullAssertion": "off" }
+				}
+			}
+		}
+	]
+}

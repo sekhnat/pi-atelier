@@ -391,11 +391,15 @@ function getString(record: Record<string, unknown>, key: string): string {
 }
 
 function sanitizeText(value: string): string {
-	return value
-		.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
-		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
+	return (
+		value
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
+			.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
+			.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+			.replace(/\s+/g, " ")
+			.trim()
+	);
 }
 
 function summarizePatternTool(args: Record<string, unknown>, cwd: string): string {

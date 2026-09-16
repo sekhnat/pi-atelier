@@ -150,6 +150,7 @@ describe("fullscreen Sidebar selection", () => {
 			.map(([value]) => String(value))
 			.findLast((value) => value.includes("\u001b]52;c;"));
 		expect(copyWrite).toBeDefined();
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 		const encoded = copyWrite?.match(/\u001b\]52;c;([A-Za-z0-9+/=]+)\u0007/)?.[1];
 		expect(encoded).toBeDefined();
 		const copied = Buffer.from(encoded ?? "", "base64").toString("utf8");

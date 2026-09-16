@@ -20,7 +20,7 @@ import {
 	type SegmentLayout,
 	type TemplateName,
 } from "./types.js";
-import { DEFAULT_SIDEBAR_PANEL_LAYOUT, normalizeSidebarPanelLayout } from "./sidebar-panels.js";
+import { type DEFAULT_SIDEBAR_PANEL_LAYOUT, normalizeSidebarPanelLayout } from "./sidebar-panels.js";
 
 export interface ConfigLoadResult {
 	config: AtelierConfig;

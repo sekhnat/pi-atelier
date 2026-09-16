@@ -360,6 +360,7 @@ async function showTextInput(
 							if (matchesKey(data, "escape")) finish(undefined);
 							else if (matchesKey(data, "enter")) finish(value);
 							else if (matchesKey(data, "backspace")) value = value.slice(0, -1);
+							// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 							else if (!data.includes("\u001b")) value += data.replace(/[\u0000-\u001f\u007f]/g, "");
 							tui.requestRender();
 						},

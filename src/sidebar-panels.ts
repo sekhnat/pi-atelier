@@ -312,6 +312,7 @@ export function resolveEffectiveSidebarPanelLayout(
 }
 
 const ANSI_ESCAPE =
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 	/(?:\u001b\][^\u0007]*(?:\u0007|\u001b\\)|\u001b\[[0-?]*[ -/]*[@-~]|\u009b[0-?]*[ -/]*[@-~])/g;
 
 /** Cheap precondition used before any regex sanitization or Unicode iteration. */
@@ -333,11 +334,14 @@ function boundedRawText(value: string, maxChars: number): string {
 }
 
 function cleanSidebarPanelText(value: string): string {
-	return value
-		.replace(ANSI_ESCAPE, "")
-		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
+	return (
+		value
+			.replace(ANSI_ESCAPE, "")
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
+			.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+			.replace(/\s+/g, " ")
+			.trim()
+	);
 }
 
 /** Defensively sanitize text before any Settings or Sidebar interpolation. */

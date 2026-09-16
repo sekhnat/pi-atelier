@@ -190,11 +190,14 @@ function spawnDetached(
 }
 
 function sanitize(value: string, maximumLength: number): string {
-	return value
-		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim()
-		.slice(0, maximumLength);
+	return (
+		value
+			// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
+			.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, maximumLength)
+	);
 }
 
 function normalizeCount(value: number | undefined): number {

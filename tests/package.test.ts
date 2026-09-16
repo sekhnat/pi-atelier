@@ -46,7 +46,7 @@ describe("npm package contract", () => {
 	it("exports the deliberate structured contribution contract from the package entrypoint", () => {
 		const contributedId: ContributedSidebarPanelId = "vendor:queue";
 		const row: SidebarPanelRow = { text: "Ready", role: "ready" };
-		const role: SidebarPanelRole = row.role ?? "primary";
+		const _role: SidebarPanelRole = row.role ?? "primary";
 		const contribution: SidebarPanelContribution = { id: contributedId, title: "Queue", rows: [row] };
 		const register: SidebarPanelRegisterEvent = {
 			version: 1,
@@ -55,21 +55,22 @@ describe("npm package contract", () => {
 			revision: 1,
 			panel: contribution,
 		};
-		const unregister: SidebarPanelUnregisterEvent = {
+		const _unregister: SidebarPanelUnregisterEvent = {
 			version: 1,
 			type: "unregister",
 			source: "vendor",
 			revision: 2,
 			id: contributedId,
 		};
-		const discovery: SidebarPanelDiscoveryEvent = { version: 1, type: "discover", requestId: "vendor-1" };
-		const event: SidebarPanelEvent = register;
-		const layout: SidebarPanelLayout = [
+		const _discovery: SidebarPanelDiscoveryEvent = { version: 1, type: "discover", requestId: "vendor-1" };
+		const _event: SidebarPanelEvent = register;
+		const _layout: SidebarPanelLayout = [
 			{ id: "agent", visible: true },
 			{ id: contributedId, visible: false },
 		];
 		// @ts-expect-error Built-ins are valid config IDs but not contributed IDs.
-		const invalidContribution: SidebarPanelContribution = { id: "agent", title: "Agent", rows: [] };
+		const _invalidContribution: SidebarPanelContribution = { id: "agent", title: "Agent", rows: [] };
+		void [_role, _unregister, _discovery, _event, _layout, _invalidContribution];
 		expect(BUILTIN_SIDEBAR_PANEL_IDS).toContain("agent");
 		expect(isSidebarPanelContributionId(contributedId)).toBe(true);
 		expect(isSidebarPanelContributionId("agent")).toBe(false);

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Verify every change in CI: `npm ci` + `npm run check` runs on pull requests and pushes across Node 22.19, 24, and latest, and a weekly canary validates the extension against the latest published `@earendil-works/pi-coding-agent`.
+- Make `npm run check` pass on any checkout where Pi has run: Biome now follows `.gitignore` (`vcs.useIgnoreFile`) and the linter enforces the `recommended` preset with `tests/**`-scoped relaxations for `noExplicitAny` and `noNonNullAssertion`; the config moved to `biome.jsonc` to carry explanatory comments.
+
 - Add capability-negotiated default visibility and placement for contributed Sidebar panels: discovery advertises `panel-defaults-v1`, contributions may declare default visibility and placement after a built-in panel, and defaults fill the effective layout without rewriting saved configuration.
 
 ## 0.10.1 — 2026-09-04
