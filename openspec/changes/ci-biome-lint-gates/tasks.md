@@ -12,7 +12,7 @@
 
 ## 3. CI workflow
 
-- [x] 3.1 Create `.github/workflows/ci.yml` with `permissions: contents: read`, per-ref `concurrency` with `cancel-in-progress: true`, a `check` job (`pull_request` + `push` to `main`; `actions/checkout@v4`; `actions/setup-node@v4` with `cache: npm` and matrix `[22.19, 24, latest]`; `npm ci` then `npm run check`), and a `canary` job (weekly cron `0 9 * * 1` plus `workflow_dispatch`; `npm ci`; `npm install --no-save @earendil-works/pi-coding-agent@latest @earendil-works/pi-tui@latest`; `npm run check`) per design D3/D4.
+- [x] 3.1 Create `.github/workflows/ci.yml` with `permissions: contents: read`, per-event-name-and-ref `concurrency` with `cancel-in-progress: true` (apply-time correction: a canary dispatch was cancelled by the concurrent push run), a `check` job (`pull_request` + `push` to `main`; `actions/checkout@v4`; `actions/setup-node@v4` with `cache: npm` and matrix `[22.19, 24, latest]`; `npm ci` then `npm run check`), and a `canary` job (weekly cron `0 9 * * 1` plus `workflow_dispatch`; `npm ci`; `npm install --no-save @earendil-works/pi-coding-agent@latest @earendil-works/pi-tui@latest`; `npm run check`) per design D3/D4.
 - [x] 3.2 Validate the workflow file: YAML parses (`python3 -c "import yaml; yaml.safe_load(open('.github/workflows/ci.yml'))"` or `npx --yes yaml-lint .github/workflows/ci.yml`), triggers include `pull_request`/`push`/`schedule`/`workflow_dispatch`, and the canary steps match design D3/D4; note the Node versions setup-node resolves for the `22.19` and `latest` entries (substitute a numeric pin if the `latest` alias is rejected).
 
 ## 4. Documentation and full gate
