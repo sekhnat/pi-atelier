@@ -460,6 +460,13 @@ function metricValue(label: string, value: string, palette: AtelierPalette, role
 	return `${palette.paint("muted", label)} ${palette.paint(role, value)}`;
 }
 
+/** Shared rendering of either cache-hit rate so the two slots cannot drift apart. */
+function cacheHitRate(percent: number | undefined): { text: string; role: PaletteRole } {
+	return percent !== undefined && Number.isFinite(percent)
+		? { text: `${percent.toFixed(1)}%`, role: "cache" }
+		: { text: "—", role: "dim" };
+}
+
 function metricPairRows(
 	left: string,
 	right: string,
@@ -493,21 +500,18 @@ function usageRows(
 				palette,
 			),
 		);
-		const hit =
-			metrics.cacheHitPercent !== undefined && Number.isFinite(metrics.cacheHitPercent)
-				? `${metrics.cacheHitPercent.toFixed(1)}%`
-				: "—";
+		const hit = cacheHitRate(metrics.cacheHitPercent);
 		rows.push(
 			...metricPairRows(
 				metricValue("Cache", formatUsageTokens(metrics.cacheRead), palette, "cache"),
-				layout.compact
-					? palette.paint(hit === "—" ? "dim" : "cache", hit)
-					: metricValue("Hit", hit, palette, hit === "—" ? "dim" : "cache"),
+				layout.compact ? palette.paint(hit.role, hit.text) : metricValue("Hit", hit.text, palette, hit.role),
 				contentWidth,
 				layout,
 				palette,
 			),
 		);
+		const last = cacheHitRate(metrics.latestCacheHitPercent);
+		rows.push(metricValue("Last", last.text, palette, last.role));
 	}
 	if (metrics.costAvailable) {
 		const cost = `$${Math.max(0, Number.isFinite(metrics.cost) ? metrics.cost : 0).toFixed(

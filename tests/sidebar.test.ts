@@ -222,6 +222,29 @@ describe("sidebar snapshot and layout", () => {
 		expect(text.indexOf("OLLAMA CLOUD")).toBeLessThan(text.indexOf("TOOLS"));
 	});
 
+	it("renders both cache-hit rates in the Usage panel with distinct labels", () => {
+		const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36);
+		const text = contentRows(lines).join("\n");
+		expect(text).toContain("Hit 96.0%");
+		expect(text).toContain("Last 88.0%");
+		expect(text.indexOf("Hit 96.0%")).toBeLessThan(text.indexOf("Last 88.0%"));
+		expect(text.indexOf("Last 88.0%")).toBeLessThan(text.indexOf("Cost"));
+	});
+
+	it("keeps the Last label in the compact Usage panel", () => {
+		const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 39, 36);
+		const text = contentRows(lines).join("\n");
+		expect(text).toContain("Last 88.0%");
+	});
+
+	it("renders the latest cache-hit unavailable marker when the value is omitted", () => {
+		const { latestCacheHitPercent: _omitted, ...metrics } = state.metrics;
+		const lines = renderSidebarLines({ ...snapshot(), metrics }, DEFAULT_CONFIG, theme, 44, 36);
+		const text = contentRows(lines).join("\n");
+		expect(text).toContain("Hit 96.0%");
+		expect(text).toContain("Last —");
+	});
+
 	it("supports load-order discovery, updates, and removal through the public event seam", () => {
 		const listeners = new Set<(data: unknown) => void>();
 		const events = {
@@ -1223,7 +1246,7 @@ describe("sidebar snapshot and layout", () => {
 				DEFAULT_CONFIG,
 				theme,
 				28,
-				36,
+				37,
 				false,
 				0,
 			),
@@ -1308,12 +1331,12 @@ describe("sidebar snapshot and layout", () => {
 			  "USAGE",
 			  "In 50.0k  Out 1.9k",
 			  "Cache 100.0k  Hit 96.0%",
+			  "Last 88.0%",
 			  "Cost $0.479",
 			  "",
 			  "",
 			  "TOOLS",
 			  "8 / 12 active                        ▸",
-			  "",
 			  "",
 			  "",
 			  "",
@@ -1438,8 +1461,9 @@ describe("sidebar snapshot and layout", () => {
 		const usageIndex = rows.indexOf("USAGE");
 		expect(rows[usageIndex + 1]).toBe("In 50.0k  Out 1.9k");
 		expect(rows[usageIndex + 2]).toBe("Cache 100.0k  Hit 96.0%");
-		expect(rows[usageIndex + 3]).toBe("Cost $0.479");
-		for (const label of ["In", "Out", "Cache", "Hit", "Cost"]) {
+		expect(rows[usageIndex + 3]).toBe("Last 88.0%");
+		expect(rows[usageIndex + 4]).toBe("Cost $0.479");
+		for (const label of ["In", "Out", "Cache", "Hit", "Last", "Cost"]) {
 			expect(fg).toHaveBeenCalledWith("muted", label);
 		}
 		for (const width of [44, 56, 72]) {
@@ -1447,6 +1471,7 @@ describe("sidebar snapshot and layout", () => {
 			const wideUsage = wideRows.indexOf("USAGE");
 			expect(wideRows[wideUsage + 1]).toBe("In 50.0k  Out 1.9k");
 			expect(wideRows[wideUsage + 2]).toBe("Cache 100.0k  Hit 96.0%");
+			expect(wideRows[wideUsage + 3]).toBe("Last 88.0%");
 		}
 	});
 
