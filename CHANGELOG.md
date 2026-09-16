@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Adapt the fullscreen Sidebar overlay adapter to Pi 0.85: the returned overlay handle delegates `getBounds` to the wrapped Pi handle (yielding `undefined` on Pi 0.84 handles without it), and development dependencies typecheck against Pi 0.85.1 while the supported floor stays Pi 0.84.0.
+
 - Verify every change in CI: `npm ci` + `npm run check` runs on pull requests and pushes across Node 22.19, 24, and latest, and a weekly canary validates the extension against the latest published `@earendil-works/pi-coding-agent`.
 - Make `npm run check` pass on any checkout where Pi has run: Biome now follows `.gitignore` (`vcs.useIgnoreFile`) and the linter enforces the `recommended` preset with `tests/**`-scoped relaxations for `noExplicitAny` and `noNonNullAssertion`; the config moved to `biome.jsonc` to carry explanatory comments.
 

@@ -299,6 +299,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 					focus: () => handle.focus(),
 					unfocus: (options) => handle.unfocus(options),
 					isFocused: () => handle.isFocused(),
+					getBounds: () => handle.getBounds?.(),
 				};
 			}
 			return Reflect.apply(base, tui, [component, overlayOptions]);

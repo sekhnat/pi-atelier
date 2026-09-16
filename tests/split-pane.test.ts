@@ -755,3 +755,65 @@ describe("split pane render lifecycle", () => {
 		expect(h.requestRender.mock.calls.length).toBeGreaterThan(0);
 	});
 });
+
+describe("fullscreen Sidebar overlay handle contract", () => {
+	it("delegates getBounds to the wrapped Pi handle and yields undefined for pre-0.85 handles", () => {
+		const write = vi.fn();
+		const terminal = {
+			columns: 120,
+			rows: 8,
+			write,
+			start: vi.fn(),
+			stop: vi.fn(),
+			hideCursor: vi.fn(),
+			showCursor: vi.fn(),
+		};
+		const renderer = new TuiAltScreen(terminal as never);
+		const tui = stableTuiReference(() => renderer);
+
+		const split = createSplitPaneController();
+		split.attach(tui);
+		split.show();
+
+		// The adapter stores the captured Pi overlay methods under a private symbol;
+		// swap the wrapped base handle to drive both contract generations.
+		const stateSymbol = Object.getOwnPropertySymbols(renderer).find(
+			(s) => String(s) === "Symbol(pi-atelier.fullscreen-overlay-adapter)",
+		);
+		if (!stateSymbol) throw new Error("fullscreen overlay adapter state symbol not found");
+		const state = (
+			renderer as unknown as Record<symbol, { baseShowOverlay: TUI["showOverlay"]; owner: unknown }>
+		)[stateSymbol];
+		if (!state?.baseShowOverlay) throw new Error("fullscreen overlay adapter state not found");
+
+		const component = { render: () => ["s"], invalidate() {} } as never;
+		const originalBase = state.baseShowOverlay;
+		try {
+			// Pi 0.85-era base handle: getBounds present -> the adapter handle delegates.
+			const sentinel = { row: 2, col: 3, width: 20, height: 6 };
+			state.baseShowOverlay = (() => {
+				const real = (
+					originalBase as unknown as (t: unknown, comp: unknown, opts?: unknown) => Record<string, unknown>
+				).call(tui, component, {});
+				return { ...real, getBounds: () => sentinel };
+			}) as unknown as TUI["showOverlay"];
+			const handleWith = tui.showOverlay(component, split.overlayOptions());
+			expect(handleWith.getBounds?.()).toEqual(sentinel);
+
+			// Pi 0.84-era base handle without getBounds -> undefined, no throw.
+			state.baseShowOverlay = (() => ({
+				hide: vi.fn(),
+				setHidden: vi.fn(),
+				isHidden: () => false,
+				focus: vi.fn(),
+				unfocus: vi.fn(),
+				isFocused: () => false,
+			})) as unknown as TUI["showOverlay"];
+			const handleWithout = tui.showOverlay(component, split.overlayOptions());
+			expect(handleWithout.getBounds?.()).toBeUndefined();
+		} finally {
+			state.baseShowOverlay = originalBase;
+			split.dispose();
+		}
+	});
+});
