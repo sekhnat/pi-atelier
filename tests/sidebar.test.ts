@@ -76,6 +76,7 @@ const state: AtelierState = {
 		cacheRead: 100_000,
 		cacheWrite: 0,
 		cacheHitPercent: 96,
+		latestCacheHitPercent: 88,
 		cost: 0.479,
 		subscription: true,
 		contextTokens: 32_400,

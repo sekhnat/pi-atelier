@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Split the Status Rail cache hit into two deliberate rates: `cacheHitPercent` now aggregates the whole session (cache-read share of input + cache-read + cache-write) instead of echoing whichever assistant message was last, and a new `latestCacheHitPercent` reports the most recent request with a stable fallback when its prompt is empty; the footer `cache` headline shows the session aggregate, the footer `hit` detail shows the latest request, and the Sidebar usage panel keeps reporting the session aggregate.
+
 - Adapt the fullscreen Sidebar overlay adapter to Pi 0.85: the returned overlay handle delegates `getBounds` to the wrapped Pi handle (yielding `undefined` on Pi 0.84 handles without it), and development dependencies typecheck against Pi 0.85.1 while the supported floor stays Pi 0.84.0.
 
 - Verify every change in CI: `npm ci` + `npm run check` runs on pull requests and pushes across Node 22.19, 24, and latest, and a weekly canary validates the extension against the latest published `@earendil-works/pi-coding-agent`.

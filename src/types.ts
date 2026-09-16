@@ -123,6 +123,7 @@ export interface AtelierMetrics {
 	cacheRead: number;
 	cacheWrite: number;
 	cacheHitPercent?: number;
+	latestCacheHitPercent?: number;
 	cost: number;
 	subscription: boolean;
 	contextTokens: number | null;

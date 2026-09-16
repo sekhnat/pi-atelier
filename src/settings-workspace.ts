@@ -122,6 +122,7 @@ const representativeState: FooterState = {
 		cacheRead: 8_100,
 		cacheWrite: 400,
 		cacheHitPercent: 72.4,
+		latestCacheHitPercent: 74.1,
 		cost: 0.142,
 		subscription: false,
 		contextTokens: 32_000,

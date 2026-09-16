@@ -85,6 +85,7 @@ const state: AtelierState = {
 		cacheRead: 5_900_000,
 		cacheWrite: 0,
 		cacheHitPercent: 98.8,
+		latestCacheHitPercent: 91.2,
 		cost: 5.041,
 		subscription: true,
 		contextTokens: 100_000,
@@ -230,7 +231,7 @@ describe("footer", () => {
 		expect(plainAt(180, DEFAULT_CONFIG)).toContain("cache 99%");
 		const classic = plainAt(180, actualClassicPresetConfig);
 		expect(classic).toContain("read 5.9M");
-		expect(classic).toContain("hit 98.8%");
+		expect(classic).toContain("hit 91.2%");
 	});
 
 	it("renders the actual classic preset segment set", () => {
@@ -277,11 +278,15 @@ describe("footer", () => {
 		);
 		expect(line).toContain(`${darkRgb.muted}read\u001b[39m ${darkRgb.cyan}5.9M\u001b[39m`);
 		expect(line).toContain(`${darkRgb.muted}write\u001b[39m ${darkRgb.cyan}42k\u001b[39m`);
-		expect(line).toContain(`${darkRgb.muted}hit\u001b[39m ${darkRgb.cyan}98.8%\u001b[39m`);
+		expect(line).toContain(`${darkRgb.muted}hit\u001b[39m ${darkRgb.cyan}91.2%\u001b[39m`);
 	});
 
 	it("keeps unavailable classic cache values dim without cache RGB", () => {
-		const { cacheHitPercent: _cacheHitPercent, ...metricsWithoutHit } = state.metrics;
+		const {
+			cacheHitPercent: _cacheHitPercent,
+			latestCacheHitPercent: _latestCacheHitPercent,
+			...metricsWithoutHit
+		} = state.metrics;
 		const line = renderFooterLine(
 			{
 				...state,
@@ -499,7 +504,7 @@ describe("footer", () => {
 		);
 		expect(ornament).toContain("ATELIER");
 		expect(ornament).toContain("read 5.9M");
-		expect(ornament).toContain("hit 98.8%");
+		expect(ornament).toContain("hit 91.2%");
 
 		const compact = renderFooterLine(
 			{ ...state, activity: "working", workingLabel: "PONDERING" },
@@ -543,7 +548,11 @@ describe("footer", () => {
 	});
 
 	it("renders unavailable and non-finite telemetry safely", () => {
-		const { cacheHitPercent: _cacheHitPercent, ...metricsWithoutHit } = state.metrics;
+		const {
+			cacheHitPercent: _cacheHitPercent,
+			latestCacheHitPercent: _latestCacheHitPercent,
+			...metricsWithoutHit
+		} = state.metrics;
 		const unavailableState: AtelierState = {
 			...state,
 			metrics: {
@@ -564,6 +573,7 @@ describe("footer", () => {
 				metrics: {
 					...state.metrics,
 					cacheHitPercent: Number.NaN,
+					latestCacheHitPercent: Number.NaN,
 					contextPercent: Number.POSITIVE_INFINITY,
 					cost: Number.NaN,
 				},

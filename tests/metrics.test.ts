@@ -7,7 +7,7 @@ const messages = [
 ];
 
 describe("metrics", () => {
-	it("matches Pi cumulative totals and latest cache-hit semantics", () => {
+	it("matches Pi cumulative totals and aggregated cache-hit semantics", () => {
 		const result = aggregateMetrics(messages, {
 			subscription: true,
 			context: { tokens: 100_000, contextWindow: 372_000, percent: 26.8817 },
@@ -20,7 +20,21 @@ describe("metrics", () => {
 			cacheWrite: 300,
 			cost: 0.5,
 		});
-		expect(result.cacheHitPercent).toBeCloseTo(90, 5);
+		expect(result.cacheHitPercent).toBeCloseTo(88.1356, 3);
+		expect(result.latestCacheHitPercent).toBeCloseTo(90, 5);
+	});
+
+	it("holds the latest cache hit stable across an empty-prompt tail message", () => {
+		const result = aggregateMetrics(
+			[...messages, { usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } } }],
+			{
+				subscription: true,
+				context: { tokens: 100_000, contextWindow: 372_000, percent: 26.8817 },
+				autoCompact: true,
+			},
+		);
+		expect(result.cacheHitPercent).toBeCloseTo(88.1356, 3);
+		expect(result.latestCacheHitPercent).toBeCloseTo(90, 5);
 	});
 
 	it("handles missing and zero prompt usage without NaN", () => {
@@ -45,6 +59,7 @@ describe("metrics", () => {
 			autoCompact: false,
 		});
 		expect(result.cacheHitPercent).toBeUndefined();
+		expect(result.latestCacheHitPercent).toBeUndefined();
 	});
 
 	it("marks absent or malformed usage as unavailable instead of throwing", () => {

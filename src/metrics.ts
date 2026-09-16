@@ -27,7 +27,7 @@ export function aggregateMetrics(
 	let cacheRead = 0;
 	let cacheWrite = 0;
 	let cost = 0;
-	let cacheHitPercent: number | undefined;
+	let latestCacheHitPercent: number | undefined;
 	let usageAvailable = false;
 	let costAvailable = false;
 
@@ -50,8 +50,13 @@ export function aggregateMetrics(
 		cacheWrite += finite(usage.cacheWrite);
 		cost += finite(usage.cost?.total);
 		const prompt = finite(usage.input) + finite(usage.cacheRead) + finite(usage.cacheWrite);
-		cacheHitPercent = prompt > 0 ? (finite(usage.cacheRead) / prompt) * 100 : undefined;
+		if (prompt > 0) {
+			latestCacheHitPercent = (finite(usage.cacheRead) / prompt) * 100;
+		}
 	}
+
+	const promptTotal = input + cacheRead + cacheWrite;
+	const cacheHitPercent = promptTotal > 0 ? (cacheRead / promptTotal) * 100 : undefined;
 
 	const context = options.context;
 	return {
@@ -62,6 +67,7 @@ export function aggregateMetrics(
 		cacheRead,
 		cacheWrite,
 		...(cacheHitPercent === undefined ? {} : { cacheHitPercent }),
+		...(latestCacheHitPercent === undefined ? {} : { latestCacheHitPercent }),
 		cost,
 		subscription: options.subscription,
 		contextTokens: context?.tokens ?? null,

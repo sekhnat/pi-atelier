@@ -242,7 +242,7 @@ function buildItems(
 				metrics.cacheWrite > 0
 					? metric("write", availableValue(metrics.usageAvailable, metrics.cacheWrite), palette, "cache")
 					: "",
-				metric("hit", percentValue(metrics.cacheHitPercent, 1), palette, "cache"),
+				metric("hit", percentValue(metrics.latestCacheHitPercent, 1), palette, "cache"),
 			]
 				.filter(Boolean)
 				.join(" ");
