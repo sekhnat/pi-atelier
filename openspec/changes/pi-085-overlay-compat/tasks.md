@@ -10,4 +10,4 @@
 ## 3. Documentation and gate
 
 - [x] 3.1 Add a `CHANGELOG.md` entry under `Unreleased` describing Pi 0.85 overlay-handle compatibility and the dev type-target bump; verify it matches the existing entry style.
-- [ ] 3.2 Run the complete repository gate `npm run check` (now typechecking against Pi 0.85.1) and confirm exit 0; after merge, `workflow_dispatch` the canary once and confirm it goes green against latest Pi.
+- [x] 3.2 Run the complete repository gate `npm run check` (now typechecking against Pi 0.85.1) and confirm exit 0; after merge, `workflow_dispatch` the canary once and confirm it goes green against latest Pi.
