@@ -20,7 +20,11 @@ import {
 	type SegmentLayout,
 	type TemplateName,
 } from "./types.js";
-import { type DEFAULT_SIDEBAR_PANEL_LAYOUT, normalizeSidebarPanelLayout } from "./sidebar-panels.js";
+import {
+	type DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	legacyPanelVisibilityFromLayout,
+	normalizeSidebarPanelLayout,
+} from "./sidebar-panels.js";
 
 export interface ConfigLoadResult {
 	config: AtelierConfig;
@@ -393,10 +397,7 @@ export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CON
 	const sidebar = resolveSidebarLayout(displayLayers, base);
 	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
 	if (sidebar.authoritative) {
-		config.showSidebarAgent =
-			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
-		config.showSidebarTodos =
-			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
+		Object.assign(config, legacyPanelVisibilityFromLayout(sidebar.layout, config));
 	} else applyGlobalSidebarCompatibility(config, input, base);
 	return {
 		config,
@@ -435,10 +436,7 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 	const sidebar = resolveSidebarLayout(displayLayers);
 	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
 	if (sidebar.authoritative) {
-		config.showSidebarAgent =
-			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
-		config.showSidebarTodos =
-			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
+		Object.assign(config, legacyPanelVisibilityFromLayout(sidebar.layout, config));
 	}
 	// Startup visibility, completion notifications, and legacy Sidebar visibility are global-user-only.
 	const global = cloneConfig(DEFAULT_CONFIG);

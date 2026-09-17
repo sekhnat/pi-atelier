@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { selectWorkingPhrase } from "./activity.js";
 import { resolveDisplayLayers } from "./config.js";
 import { aggregateMetrics, type UsageMessage } from "./metrics.js";
+import { legacyPanelVisibilityFromLayout } from "./sidebar-panels.js";
 import type {
 	ActivityState,
 	AtelierConfig,
@@ -181,14 +182,8 @@ export class AtelierRuntime {
 		};
 		if (patch.sidebarPanelLayout) {
 			const sidebarPanelLayout = patch.sidebarPanelLayout.map((entry) => ({ ...entry }));
-			this.#config = {
-				...this.#config,
-				sidebarPanelLayout,
-				showSidebarAgent:
-					sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible ?? this.#config.showSidebarAgent,
-				showSidebarTodos:
-					sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible ?? this.#config.showSidebarTodos,
-			};
+			const next = { ...this.#config, sidebarPanelLayout };
+			this.#config = { ...next, ...legacyPanelVisibilityFromLayout(sidebarPanelLayout, next) };
 		}
 		if (canonicalizeSession) {
 			const target = resolveDisplayLayers(this.#displayLayers).display;

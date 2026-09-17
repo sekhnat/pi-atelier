@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { legacyPanelVisibilityFromLayout } from "../src/sidebar-panels.js";
 import { AtelierRuntime } from "../src/state.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
@@ -252,6 +253,20 @@ describe("AtelierRuntime", () => {
 		expect(runtime.getDisplaySettings().density).toBe("comfortable");
 		expect(runtime.getDisplayProvenance().density).toBe("project");
 		expect(runtime.getSessionDisplayOverride()).toBeUndefined();
+	});
+
+	it("keeps legacy visibility booleans equal to the layout projection after a persisted layout patch", () => {
+		const { runtime } = createRuntime();
+		const patched = DEFAULT_CONFIG.sidebarPanelLayout.map((entry) =>
+			entry.id === "agent" ? { ...entry, visible: false } : { ...entry },
+		);
+
+		runtime.applySavedUserDisplayPatch({ sidebarPanelLayout: patched });
+
+		const config = runtime.getConfig();
+		expect(config.showSidebarAgent).toBe(false);
+		expect(config.showSidebarTodos).toBe(true);
+		expect(config).toMatchObject(legacyPanelVisibilityFromLayout(config.sidebarPanelLayout, config));
 	});
 
 	it("selects again for the next work cycle and still updates configuration", () => {
