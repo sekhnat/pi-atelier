@@ -2,6 +2,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@earendil-works/p
 import { formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
 import { responsePerformanceValues } from "./run-activity.js";
+import { sanitizeTerminalText } from "./sanitize.js";
 import type { AtelierConfig, AtelierMetrics, AtelierState, DisplayValue, FooterState } from "./types.js";
 
 export interface ThemeLike {
@@ -55,14 +56,7 @@ const DROP = {
 	context: Number.POSITIVE_INFINITY,
 } as const;
 
-const sanitize = (text: string): string =>
-	text
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
-		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
-		.replace(/[\u0000-\u001f\u007f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
+const sanitize = sanitizeTerminalText;
 
 function paintValue(value: DisplayValue, role: PaletteRole, palette: AtelierPalette): string {
 	return palette.paint(value.available ? role : "dim", value.text);

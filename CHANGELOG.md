@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Close a latent leak in OS notifications: completion-notification titles and bodies now strip terminal escape sequences (OSC, CSI, two-character ESC, 8-bit CSI) and control characters before truncation, so colored or control-bearing text can no longer reach the `osascript`/`powershell` command line or environment.
+- Consolidate all display sanitizers into one module: `src/sanitize.ts` owns the strictest-union escape pattern and `sanitizeTerminalText`; the footer, sidebar, run-activity, and sidebar-panel paths alias it instead of maintaining four regex generations, and the menu's key-event filter stays as-is with a pointer comment.
+
 - Harden the fullscreen Sidebar overlay handle for future Pi releases: the adapted handle now delegates unknown members to the wrapped Pi handle's prototype chain instead of hand-forwarding each member, so a Pi overlay handle that grows new members works without an adapter change; `hide` teardown, `setHidden` state sync, and the Pi 0.84 `getBounds` shim remain the only overrides, and the overlay-handle contract is verified through the controller's new `baseOverlayMethods` option instead of private adapter state.
 
 - Split the Status Rail cache hit into two deliberate rates: `cacheHitPercent` now aggregates the whole session (cache-read share of input + cache-read + cache-write) instead of echoing whichever assistant message was last, and a new `latestCacheHitPercent` reports the most recent request with a stable fallback when its prompt is empty; the footer `cache` headline shows the session aggregate, the footer `hit` detail shows the latest request, and the Sidebar usage panel shows both rates — the session aggregate as its hit value plus the latest request as a distinct `Last` value.

@@ -12,6 +12,7 @@ import {
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
+import { sanitizeTerminalText } from "./sanitize.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	isSidebarPanelContributionId,
@@ -129,14 +130,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 	};
 }
 
-const sanitize = (text: string): string =>
-	text
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
-		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-		// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
-		.replace(/[\u0000-\u001f\u007f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
+const sanitize = sanitizeTerminalText;
 
 const display = (value: string | undefined): string => {
 	const safe = value === undefined ? "" : sanitize(value);

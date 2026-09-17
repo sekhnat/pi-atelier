@@ -1,6 +1,7 @@
 import nodePath from "node:path";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { toDisplayPath } from "./display-path.js";
+import { sanitizeTerminalText } from "./sanitize.js";
 import type { DisplayValue, ResponsePerformance } from "./types.js";
 
 export type ToolActivityStatus = "running" | "done" | "failed";
@@ -390,17 +391,7 @@ function getString(record: Record<string, unknown>, key: string): string {
 	return typeof value === "string" ? value : "";
 }
 
-function sanitizeText(value: string): string {
-	return (
-		value
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
-			.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, "")
-			// biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
-			.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-			.replace(/\s+/g, " ")
-			.trim()
-	);
-}
+const sanitizeText = sanitizeTerminalText;
 
 function summarizePatternTool(args: Record<string, unknown>, cwd: string): string {
 	const pattern = sanitizeText(getString(args, "pattern"));

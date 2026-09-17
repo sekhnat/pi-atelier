@@ -12,6 +12,9 @@ class FakeProcess extends EventEmitter implements NotificationProcess {
 	unref = vi.fn();
 }
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: assertions intentionally reject control/ANSI bytes
+const CONTROL_TEXT = /[\u0000-\u001f\u007f-\u009f]/;
+
 const settled: CompletionNotification = {
 	kind: "turn-settled",
 	projectName: "pi-atelier",
@@ -55,6 +58,42 @@ describe("completion notifier", () => {
 		h.notifier.inputRequested("question-2", notification);
 
 		expect(h.spawn).toHaveBeenCalledTimes(2);
+	});
+
+	it("strips escape sequences from macOS notification argv", () => {
+		const h = harness("darwin");
+		h.notifier.runStarted();
+		h.notifier.turnSettled({
+			kind: "turn-settled",
+			projectName: "\u001b[31mpi\u001b[0m-atelier",
+			sessionName: "\u001b]0;leak\u0007session \u001b[2mtask\u001b[0m",
+			completedToolCount: 1,
+		});
+
+		expect(h.spawn).toHaveBeenCalledOnce();
+		const [command, args] = h.spawn.mock.calls[0]!;
+		expect(command).toBe("osascript");
+		const argv = args.join(" ");
+		expect(argv).not.toMatch(CONTROL_TEXT);
+		expect(argv).toContain("pi-atelier");
+		expect(argv).toContain("session task");
+	});
+
+	it("strips escape sequences from Windows notification env", () => {
+		const h = harness("win32");
+		h.notifier.runStarted();
+		h.notifier.turnSettled({
+			kind: "turn-settled",
+			projectName: "\u001b[31mpi\u001b[0m-atelier",
+			sessionName: "\u009b2mleak\u009b0m session",
+		});
+
+		expect(h.spawn).toHaveBeenCalledOnce();
+		const [, , options] = h.spawn.mock.calls[0]!;
+		const env = options?.env as Record<string, string>;
+		expect(env.PI_ATELIER_NOTIFICATION_TITLE).not.toMatch(CONTROL_TEXT);
+		expect(env.PI_ATELIER_NOTIFICATION_BODY).not.toMatch(CONTROL_TEXT);
+		expect(env.PI_ATELIER_NOTIFICATION_TITLE).toContain("pi-atelier");
 	});
 
 	it("delivers an authoritative settlement event even when agent_start was not observed", () => {
