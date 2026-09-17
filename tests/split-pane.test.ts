@@ -1,4 +1,4 @@
-import type { OverlayHandle, TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import { TuiMainScreen as PiTuiMainScreen, TuiAltScreen } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -872,9 +872,10 @@ describe("fullscreen Sidebar overlay handle contract", () => {
 			expect((surface[symbolKey] as () => string)()).toBe("symbolic");
 
 			// Exactly the fullscreen-specific members shadow the base; every
-			// other member resolves through the wrapped handle's prototype.
+			// other member resolves through the wrapped handle's prototype, and
+			// the adapter adds no symbol-keyed own properties.
 			expect(Object.getOwnPropertyNames(adapted).sort()).toEqual(["getBounds", "hide", "setHidden"]);
-			expect(Object.getOwnPropertySymbols(adapted)).toEqual([]);
+			expect(Reflect.ownKeys(adapted).filter((key) => typeof key === "symbol")).toEqual([]);
 			for (const member of ["isHidden", "focus", "unfocus", "isFocused", "getFreshBounds"]) {
 				expect(Object.hasOwn(adapted, member)).toBe(false);
 			}
