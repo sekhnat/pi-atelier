@@ -15,6 +15,7 @@ import {
 import { sanitizeTerminalText } from "./sanitize.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
+	isPanelVisibleInLayout,
 	isSidebarPanelContributionId,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
@@ -903,7 +904,7 @@ export function renderSidebarLines(
 					},
 				]
 			: []),
-		...(config.showSidebarAgent
+		...(isPanelVisibleInLayout(effectiveLayout, "agent")
 			? [
 					{
 						name: "agent",
@@ -934,15 +935,19 @@ export function renderSidebarLines(
 			required: false,
 			dropRank: 80,
 		},
-		{
-			name: "todos",
-			panel: "TODOS",
-			panelId: "todos",
-			panelRole: "accent",
-			rows: config.showSidebarTodos ? todosRows(snapshot, palette) : [],
-			required: false,
-			dropRank: 90,
-		},
+		...(isPanelVisibleInLayout(effectiveLayout, "todos")
+			? [
+					{
+						name: "todos",
+						panel: "TODOS",
+						panelId: "todos",
+						panelRole: "accent" as const,
+						rows: todosRows(snapshot, palette),
+						required: false,
+						dropRank: 90,
+					},
+				]
+			: []),
 		{
 			name: "context",
 			panel: "CONTEXT",

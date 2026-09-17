@@ -947,13 +947,7 @@ export default function atelierExtension(
 		const sidebarTodoLayout = current.runtime
 			.getConfig()
 			.sidebarPanelLayout.find((entry) => entry.id === "todos");
-		if (
-			!current.runtime.getConfig().showSidebarTodos ||
-			sidebarTodoLayout?.visible === false ||
-			!sidebarVisible ||
-			todoList.length === 0
-		)
-			return;
+		if (sidebarTodoLayout?.visible === false || !sidebarVisible || todoList.length === 0) return;
 		const done = todoList.filter((t) => t.status === "completed").length;
 		return {
 			content: [{ type: "text", text: `${done}/${todoList.length} done · see sidebar` }],

@@ -27,7 +27,12 @@ import {
 	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
-import { type AtelierState, type SidebarPanelLayout, DEFAULT_CONFIG } from "../src/types.js";
+import {
+	type AtelierConfig,
+	type AtelierState,
+	type SidebarPanelLayout,
+	DEFAULT_CONFIG,
+} from "../src/types.js";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 const stripAnsi = (text: string) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
@@ -168,7 +173,11 @@ describe("sidebar snapshot and layout", () => {
 				{ id: "vendor:queue" as const, visible: true },
 				{ id: "tools" as const, visible: true },
 				{ id: "activity" as const, visible: true },
-				...DEFAULT_CONFIG.sidebarPanelLayout.filter((entry) => !["tools", "activity"].includes(entry.id)),
+				// The persisted layout is the only render gate: without an entry,
+				// agent and todos are not visible regardless of the legacy booleans.
+				...DEFAULT_CONFIG.sidebarPanelLayout.filter(
+					(entry) => !["tools", "activity", "agent", "todos"].includes(entry.id),
+				),
 			],
 		};
 		const lines = renderSidebarLines(
@@ -2165,7 +2174,13 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("hides Agent while retaining every populated sibling panel", () => {
-		const configWithoutAgent = { ...DEFAULT_CONFIG, showSidebarAgent: false };
+		const configWithoutAgent = {
+			...DEFAULT_CONFIG,
+			showSidebarAgent: false,
+			sidebarPanelLayout: DEFAULT_CONFIG.sidebarPanelLayout.map((entry) =>
+				entry.id === "agent" ? { ...entry, visible: false } : { ...entry },
+			),
+		};
 		const populated = {
 			...snapshot(),
 			todos: [
@@ -2697,7 +2712,7 @@ describe("todos panel", () => {
 		expect(rows).toContain("○ #3 Commit changes");
 	});
 
-	it("hides todos panel when config disables showSidebarTodos", () => {
+	it("hides the todos panel entirely when the layout marks it hidden despite the legacy boolean", () => {
 		const snapWithTodos = buildSidebarSnapshot({
 			state,
 			cwd: "/Users/example/projects/pi-atelier",
@@ -2710,9 +2725,53 @@ describe("todos panel", () => {
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task", status: "pending" }],
 		});
-		const config = { ...DEFAULT_CONFIG, showSidebarTodos: false };
+		const config: AtelierConfig = {
+			...DEFAULT_CONFIG,
+			showSidebarTodos: true,
+			sidebarPanelLayout: DEFAULT_CONFIG.sidebarPanelLayout.map((entry) =>
+				entry.id === "todos" ? { ...entry, visible: false } : { ...entry },
+			),
+		};
 		const rows = contentRows(renderSidebarLines(snapWithTodos, config, theme, 44, 36, false));
 		expect(rows).not.toContain("TODOS");
+	});
+
+	it("renders the todos panel when the layout marks it visible despite the legacy boolean", () => {
+		const snapWithTodos = buildSidebarSnapshot({
+			state,
+			cwd: "/Users/example/projects/pi-atelier",
+			sessionName: "Sidebar implementation",
+			sessionFile: "/tmp/session.jsonl",
+			branchEntryCount: 38,
+			activeToolCount: 8,
+			availableToolCount: 12,
+			extensionStatuses: ["tests passing"],
+			runActivity: EMPTY_RUN_ACTIVITY,
+			todos: [{ id: 1, text: "Task", status: "pending" }],
+		});
+		const config: AtelierConfig = { ...DEFAULT_CONFIG, showSidebarTodos: false };
+		const rows = contentRows(renderSidebarLines(snapWithTodos, config, theme, 44, 36, false));
+		expect(rows).toContain("TODOS");
+		expect(rows).toContain("○ #1 Task");
+	});
+
+	it("renders the todos panel when the legacy boolean and the layout agree", () => {
+		const snapWithTodos = buildSidebarSnapshot({
+			state,
+			cwd: "/Users/example/projects/pi-atelier",
+			sessionName: "Sidebar implementation",
+			sessionFile: "/tmp/session.jsonl",
+			branchEntryCount: 38,
+			activeToolCount: 8,
+			availableToolCount: 12,
+			extensionStatuses: ["tests passing"],
+			runActivity: EMPTY_RUN_ACTIVITY,
+			todos: [{ id: 1, text: "Task", status: "pending" }],
+		});
+		const config: AtelierConfig = { ...DEFAULT_CONFIG, showSidebarTodos: true };
+		const rows = contentRows(renderSidebarLines(snapWithTodos, config, theme, 44, 36, false));
+		expect(rows).toContain("TODOS");
+		expect(rows).toContain("○ #1 Task");
 	});
 
 	it("sanitizes ansi codes in todo text", () => {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Make the Sidebar panel layout the only render gate: panel groups are constructed from the effective panel layout instead of the legacy `showSidebarAgent`/`showSidebarTodos` booleans, so disagreeing configurations can no longer produce empty-chrome panels or built-but-never-ordered groups (agreeing configurations — the only kind config resolution produces — render identically), and the todos integration guard reads the layout only.
+
 - Close a latent leak in OS notifications: completion-notification titles and bodies now strip terminal escape sequences (OSC, CSI, two-character ESC, 8-bit CSI) and control characters before truncation, so colored or control-bearing text can no longer reach the `osascript`/`powershell` command line or environment.
 - Consolidate all display sanitizers into one module: `src/sanitize.ts` owns the strictest-union escape pattern and `sanitizeTerminalText`; the footer, sidebar, run-activity, and sidebar-panel paths alias it instead of maintaining four regex generations, and the menu's key-event filter stays as-is with a pointer comment.
 
