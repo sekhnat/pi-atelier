@@ -390,18 +390,6 @@ function applyNonDisplay(
 	}
 }
 
-function applyGlobalSidebarCompatibility(
-	config: AtelierConfig,
-	input: unknown,
-	base: Pick<AtelierConfig, "showSidebarAgent" | "showSidebarTodos"> = DEFAULT_CONFIG,
-): void {
-	config.showSidebarAgent = base.showSidebarAgent;
-	config.showSidebarTodos = base.showSidebarTodos;
-	const global = record(input);
-	if (typeof global?.showSidebarAgent === "boolean") config.showSidebarAgent = global.showSidebarAgent;
-	if (typeof global?.showSidebarTodos === "boolean") config.showSidebarTodos = global.showSidebarTodos;
-}
-
 /**
  * The single resolution pipeline behind the public entry points: applies the
  * non-display fields per layer in fixed user → project → session order
@@ -458,44 +446,15 @@ async function readJson(path: string): Promise<{ value?: unknown; warning?: stri
 
 export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoadResult> {
 	const user = await readJson(options.userPath);
-	const project = options.projectTrusted ? await readJson(options.projectPath) : {};
-	const config = cloneConfig(DEFAULT_CONFIG);
-	const warnings: string[] = [];
-	applyNonDisplay(user.value, config, warnings, "user");
-	if (options.projectTrusted) applyNonDisplay(project.value, config, warnings, "project");
-	applyNonDisplay(options.session, config, warnings, "session");
-	const userRecord = record(user.value);
-	const projectRecord = options.projectTrusted ? record(project.value) : undefined;
-	const sessionRecord = record(options.session);
-	const displayLayers: DisplayLayerState = {
-		...(userRecord ? { user: userRecord } : {}),
-		...(projectRecord ? { project: projectRecord } : {}),
-		...(sessionRecord ? { session: sessionRecord } : {}),
+	const project = options.projectTrusted ? await readJson(options.projectPath) : { value: undefined };
+	const layers = {
+		user: user.value,
+		project: project.value,
+		session: options.session,
 	};
-	const resolved = resolveDisplayLayers(displayLayers);
-	const sidebar = resolveSidebarLayout(displayLayers);
-	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
-	if (sidebar.authoritative) {
-		Object.assign(config, legacyPanelVisibilityFromLayout(sidebar.layout, config));
-	}
-	// Startup visibility, completion notifications, and legacy Sidebar visibility are global-user-only.
-	const global = cloneConfig(DEFAULT_CONFIG);
-	applyNonDisplay(user.value, global, []);
-	config.showSidebarOnStartup = global.showSidebarOnStartup;
-	config.completionNotifications = global.completionNotifications;
-	if (!sidebar.authoritative) applyGlobalSidebarCompatibility(config, user.value);
-	return {
-		config,
-		warnings: [
-			...new Set(
-				[user.warning, project.warning, ...warnings, ...resolved.warnings, ...sidebar.warnings].filter(
-					(item): item is string => !!item,
-				),
-			),
-		],
-		displayLayers,
-		displayProvenance: resolved.provenance,
-	};
+	const result = resolveConfig(layers);
+	const readWarnings = [user.warning, project.warning].filter((item): item is string => !!item);
+	return { ...result, warnings: [...new Set([...readWarnings, ...result.warnings])] };
 }
 
 export async function saveUserConfigPatch(path: string, patch: Partial<AtelierConfig>): Promise<void> {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve configuration through one shared pipeline: `loadConfig` and `validateConfig` are now thin adapters over an internal `resolveConfig` that applies layers in a fixed user → project → session order, and global-user-only scoping (`showSidebarOnStartup`, `completionNotifications`, `showSidebarAgent`, `showSidebarTodos`) is declared once instead of enforced by re-applying user values over already-applied project/session values.
+
 - Make the Sidebar panel layout the only render gate: panel groups are constructed from the effective panel layout instead of the legacy `showSidebarAgent`/`showSidebarTodos` booleans, so disagreeing configurations can no longer produce empty-chrome panels or built-but-never-ordered groups (agreeing configurations — the only kind config resolution produces — render identically), and the todos integration guard reads the layout only.
 
 - Close a latent leak in OS notifications: completion-notification titles and bodies now strip terminal escape sequences (OSC, CSI, two-character ESC, 8-bit CSI) and control characters before truncation, so colored or control-bearing text can no longer reach the `osascript`/`powershell` command line or environment.
