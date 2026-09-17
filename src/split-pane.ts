@@ -98,6 +98,42 @@ const EMPTY_SIDEBAR_COMPONENT: Component = {
 	invalidate() {},
 };
 
+/**
+ * Hooks the fullscreen overlay adapter supplies so the adapted handle can
+ * react to overlay lifecycle changes without the adapter forwarding more
+ * members than pi-tui's contract requires.
+ */
+interface FullscreenHandleHooks {
+	onTearDown(): void;
+	onHiddenChange(hidden: boolean): void;
+}
+
+/**
+ * Adapts a Pi overlay handle for the fullscreen sidebar by delegation instead
+ * of per-member forwarding: the adapted handle's prototype is the wrapped
+ * handle, so every base member — including members pi-tui adds in future
+ * releases — resolves through the chain untouched. Only the fullscreen-specific
+ * members are own overrides:
+ * - `hide` tears down the fullscreen layout swap even when the base hide throws;
+ * - `setHidden` keeps the hidden state in sync and re-renders;
+ * - `getBounds` shims Pi 0.84 handles that predate the method (undefined, no throw).
+ */
+const adaptFullscreenOverlayHandle = (handle: OverlayHandle, hooks: FullscreenHandleHooks): OverlayHandle =>
+	Object.assign(Object.create(handle) as OverlayHandle, {
+		hide() {
+			try {
+				handle.hide();
+			} finally {
+				hooks.onTearDown();
+			}
+		},
+		setHidden(hidden: boolean) {
+			handle.setHidden(hidden);
+			hooks.onHiddenChange(hidden);
+		},
+		getBounds: () => handle.getBounds?.(),
+	} satisfies Partial<OverlayHandle>);
+
 export function createSplitPaneController(options: SplitPaneControllerOptions = {}): SplitPaneController {
 	const minimumSidebar = Math.max(
 		1,
@@ -275,32 +311,22 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 					component,
 					{ ...overlayOptions, visible: () => false },
 				]) as OverlayHandle;
-				return {
-					hide() {
-						try {
-							handle.hide();
-						} finally {
-							if (fullscreenSidebarComponent === component) {
-								enabled = false;
-								fullscreenSidebarComponent = undefined;
-								syncFullscreenLayoutAdapter();
-								tui?.requestRender();
-							}
+				return adaptFullscreenOverlayHandle(handle, {
+					onTearDown: () => {
+						if (fullscreenSidebarComponent === component) {
+							enabled = false;
+							fullscreenSidebarComponent = undefined;
+							syncFullscreenLayoutAdapter();
+							tui?.requestRender();
 						}
 					},
-					setHidden(hidden) {
-						handle.setHidden(hidden);
+					onHiddenChange: (hidden) => {
 						if (fullscreenSidebarComponent === component) {
 							fullscreenSidebarHidden = hidden;
 							tui?.requestRender();
 						}
 					},
-					isHidden: () => handle.isHidden(),
-					focus: () => handle.focus(),
-					unfocus: (options) => handle.unfocus(options),
-					isFocused: () => handle.isFocused(),
-					getBounds: () => handle.getBounds?.(),
-				};
+				});
 			}
 			return Reflect.apply(base, tui, [component, overlayOptions]);
 		};
