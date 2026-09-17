@@ -201,6 +201,44 @@ describe("configuration", () => {
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
 	});
 
+	it("warns about a malformed global-user-only value from the project layer without applying it", async () => {
+		await writeJson(userPath, { showSidebarOnStartup: false });
+		await writeJson(projectPath, { showSidebarOnStartup: "yes" });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+		});
+		expect(result.config.showSidebarOnStartup).toBe(false);
+		expect(result.warnings).toContain("showSidebarOnStartup must be boolean");
+	});
+
+	it("applies non-scoped display fields from the session layer", async () => {
+		await writeJson(userPath, { showSessionActions: false });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSessionActions: true },
+		});
+		expect(result.config.showSessionActions).toBe(true);
+	});
+
+	it("applies non-scoped fields in user, project, then session order", async () => {
+		await writeJson(userPath, { showSessionActions: false, showSidebarToolNames: false });
+		await writeJson(projectPath, { showSessionActions: true, showSidebarToolNames: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarToolNames: false },
+		});
+		// With no session value, the project value wins over the user value.
+		expect(result.config.showSessionActions).toBe(true);
+		// The session value wins over the project value.
+		expect(result.config.showSidebarToolNames).toBe(false);
+	});
+
 	it("does not read, warn about, or attribute an untrusted project", async () => {
 		await writeFile(projectPath, "{broken", "utf8");
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });

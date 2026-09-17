@@ -333,7 +333,25 @@ export function resolveDisplayLayers(
 	return { display, provenance, warnings: [...new Set(warnings)] };
 }
 
-function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string[]): void {
+/**
+ * Fields that only the user configuration layer may set: they govern the
+ * whole session rather than one display layer. Project and session values
+ * are still type-checked (the warning contract is preserved) but are not
+ * applied. Declared once; enforced by filter-on-apply in applyNonDisplay.
+ */
+const GLOBAL_USER_ONLY_FIELDS = [
+	"showSidebarOnStartup",
+	"completionNotifications",
+	"showSidebarAgent",
+	"showSidebarTodos",
+] as const satisfies readonly (keyof AtelierConfig)[];
+
+function applyNonDisplay(
+	input: unknown,
+	config: AtelierConfig,
+	warnings: string[],
+	source: ConfigurationSource = "user",
+): void {
 	if (!isRecord(input)) {
 		if (input !== undefined) warnings.push("Configuration must be a JSON object");
 		return;
@@ -362,16 +380,13 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 			config.currencyDecimals = input.currencyDecimals;
 		else warnings.push("currencyDecimals must be an integer from 0 through 6");
 	}
-	for (const key of [
-		"showSessionActions",
-		"showSidebarToolNames",
-		"showSidebarAgent",
-		"showSidebarTodos",
-		"showSidebarOnStartup",
-		"completionNotifications",
-	] as const) {
-		if (typeof input[key] === "boolean") config[key] = input[key];
-		else if (key in input) warnings.push(`${key} must be boolean`);
+	const globalUserOnly = new Set<string>(GLOBAL_USER_ONLY_FIELDS);
+	for (const key of ["showSessionActions", "showSidebarToolNames", ...GLOBAL_USER_ONLY_FIELDS] as const) {
+		if (typeof input[key] === "boolean") {
+			// Global-user-only fields filter on apply: every layer is type-checked,
+			// but only the user layer's values land in the resolved config.
+			if (source === "user" || !globalUserOnly.has(key)) config[key] = input[key];
+		} else if (key in input) warnings.push(`${key} must be boolean`);
 	}
 }
 
@@ -421,9 +436,9 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 	const project = options.projectTrusted ? await readJson(options.projectPath) : {};
 	const config = cloneConfig(DEFAULT_CONFIG);
 	const warnings: string[] = [];
-	applyNonDisplay(user.value, config, warnings);
-	if (options.projectTrusted) applyNonDisplay(project.value, config, warnings);
-	applyNonDisplay(options.session, config, warnings);
+	applyNonDisplay(user.value, config, warnings, "user");
+	if (options.projectTrusted) applyNonDisplay(project.value, config, warnings, "project");
+	applyNonDisplay(options.session, config, warnings, "session");
 	const userRecord = record(user.value);
 	const projectRecord = options.projectTrusted ? record(project.value) : undefined;
 	const sessionRecord = record(options.session);
