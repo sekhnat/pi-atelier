@@ -312,6 +312,38 @@ export function resolveEffectiveSidebarPanelLayout(
 	return effective;
 }
 
+/** The legacy `AtelierConfig` booleans derived from the panel layout. */
+export interface LegacyPanelVisibility {
+	showSidebarAgent: boolean;
+	showSidebarTodos: boolean;
+}
+
+/**
+ * The single layout→visibility projection for the legacy config booleans: an
+ * entry's `visible` flag is authoritative, and a layout with no entry for a
+ * panel keeps the fallback value (the `??` semantics of the backfill).
+ */
+export function legacyPanelVisibilityFromLayout(
+	layout: readonly SidebarPanelLayoutEntry[],
+	fallback: LegacyPanelVisibility,
+): LegacyPanelVisibility {
+	return {
+		showSidebarAgent: layout.find((entry) => entry.id === "agent")?.visible ?? fallback.showSidebarAgent,
+		showSidebarTodos: layout.find((entry) => entry.id === "todos")?.visible ?? fallback.showSidebarTodos,
+	};
+}
+
+/**
+ * Render-side projection for a panel's visibility: an entry that marks the
+ * panel visible is required — a missing layout entry is not visible.
+ */
+export function isPanelVisibleInLayout(
+	layout: readonly SidebarPanelLayoutEntry[] | undefined,
+	id: SidebarPanelId,
+): boolean {
+	return layout?.find((entry) => entry.id === id)?.visible === true;
+}
+
 /** Cheap precondition used before any regex sanitization or Unicode iteration. */
 export function isSidebarPanelTextWithinRawLimit(value: unknown, maxCodeUnits: number): value is string {
 	return typeof value === "string" && value.length <= maxCodeUnits;
