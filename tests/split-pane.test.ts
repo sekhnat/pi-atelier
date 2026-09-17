@@ -1,4 +1,4 @@
-import type { TUI } from "@earendil-works/pi-tui";
+import type { OverlayHandle, TUI } from "@earendil-works/pi-tui";
 import { TuiMainScreen as PiTuiMainScreen, TuiAltScreen } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -757,62 +757,128 @@ describe("split pane render lifecycle", () => {
 });
 
 describe("fullscreen Sidebar overlay handle contract", () => {
-	it("delegates getBounds to the wrapped Pi handle and yields undefined for pre-0.85 handles", () => {
-		const write = vi.fn();
+	const contractTui = (): TUI => {
 		const terminal = {
 			columns: 120,
 			rows: 8,
-			write,
+			write: vi.fn(),
 			start: vi.fn(),
 			stop: vi.fn(),
 			hideCursor: vi.fn(),
 			showCursor: vi.fn(),
 		};
 		const renderer = new TuiAltScreen(terminal as never);
-		const tui = stableTuiReference(() => renderer);
+		return stableTuiReference(() => renderer);
+	};
 
-		const split = createSplitPaneController();
+	// A plain object of closure members — the same shape pi-tui's showOverlay returns.
+	const baseHandle = (overrides: Record<PropertyKey, unknown> = {}) => ({
+		hide: vi.fn(),
+		setHidden: vi.fn(),
+		isHidden: vi.fn(() => false),
+		focus: vi.fn(),
+		unfocus: vi.fn(),
+		isFocused: vi.fn(() => false),
+		...overrides,
+	});
+
+	it("delegates getBounds to the wrapped Pi handle and yields undefined for pre-0.85 handles", () => {
+		const component = { render: () => ["s"], invalidate() {} } as never;
+
+		// Pi 0.85-era base handle: getBounds present -> the adapted handle delegates.
+		const sentinel = { row: 2, col: 3, width: 20, height: 6 };
+		const base85 = baseHandle({ getBounds: vi.fn(() => sentinel) });
+		const split85 = createSplitPaneController({
+			baseOverlayMethods: () => ({
+				baseShowOverlay: vi.fn(() => base85) as unknown as TUI["showOverlay"],
+				baseHideOverlay: vi.fn() as unknown as TUI["hideOverlay"],
+			}),
+		});
+		const tui85 = contractTui();
+		split85.attach(tui85);
+		split85.show();
+		try {
+			const handleWith = tui85.showOverlay(component, split85.overlayOptions());
+			expect(handleWith.getBounds?.()).toEqual(sentinel);
+		} finally {
+			split85.dispose();
+		}
+
+		// Pi 0.84-era base handle without getBounds -> undefined, no throw.
+		const base84 = baseHandle();
+		const split84 = createSplitPaneController({
+			baseOverlayMethods: () => ({
+				baseShowOverlay: vi.fn(() => base84) as unknown as TUI["showOverlay"],
+				baseHideOverlay: vi.fn() as unknown as TUI["hideOverlay"],
+			}),
+		});
+		const tui84 = contractTui();
+		split84.attach(tui84);
+		split84.show();
+		try {
+			const handleWithout = tui84.showOverlay(component, split84.overlayOptions());
+			expect(handleWithout.getBounds?.()).toBeUndefined();
+			expect(handleWithout.isHidden()).toBe(false);
+			expect(base84.isHidden).toHaveBeenCalledOnce();
+		} finally {
+			split84.dispose();
+		}
+	});
+
+	it("delegates every base member and shadows exactly hide, setHidden, and getBounds", () => {
+		const symbolKey = Symbol("pi-test.future-symbol-method");
+		const symbolMethod = vi.fn(() => "symbolic");
+		// A hypothetical eighth member pi-tui has not introduced yet, plus a
+		// symbol-keyed method: both must stay reachable with zero adapter changes.
+		const base = baseHandle({ getFreshBounds: vi.fn(() => "fresh") }) as Record<PropertyKey, unknown>;
+		base[symbolKey] = symbolMethod;
+
+		const split = createSplitPaneController({
+			baseOverlayMethods: () => ({
+				baseShowOverlay: vi.fn(() => base) as unknown as TUI["showOverlay"],
+				baseHideOverlay: vi.fn() as unknown as TUI["hideOverlay"],
+			}),
+		});
+		const tui = contractTui();
 		split.attach(tui);
 		split.show();
-
-		// The adapter stores the captured Pi overlay methods under a private symbol;
-		// swap the wrapped base handle to drive both contract generations.
-		const stateSymbol = Object.getOwnPropertySymbols(renderer).find(
-			(s) => String(s) === "Symbol(pi-atelier.fullscreen-overlay-adapter)",
-		);
-		if (!stateSymbol) throw new Error("fullscreen overlay adapter state symbol not found");
-		const state = (
-			renderer as unknown as Record<symbol, { baseShowOverlay: TUI["showOverlay"]; owner: unknown }>
-		)[stateSymbol];
-		if (!state?.baseShowOverlay) throw new Error("fullscreen overlay adapter state not found");
-
-		const component = { render: () => ["s"], invalidate() {} } as never;
-		const originalBase = state.baseShowOverlay;
 		try {
-			// Pi 0.85-era base handle: getBounds present -> the adapter handle delegates.
-			const sentinel = { row: 2, col: 3, width: 20, height: 6 };
-			state.baseShowOverlay = (() => {
-				const real = (
-					originalBase as unknown as (t: unknown, comp: unknown, opts?: unknown) => Record<string, unknown>
-				).call(tui, component, {});
-				return { ...real, getBounds: () => sentinel };
-			}) as unknown as TUI["showOverlay"];
-			const handleWith = tui.showOverlay(component, split.overlayOptions());
-			expect(handleWith.getBounds?.()).toEqual(sentinel);
+			const adapted = tui.showOverlay(
+				{ render: () => ["s"], invalidate() {} } as never,
+				split.overlayOptions(),
+			);
+			const surface = adapted as unknown as Record<PropertyKey, unknown>;
 
-			// Pi 0.84-era base handle without getBounds -> undefined, no throw.
-			state.baseShowOverlay = (() => ({
-				hide: vi.fn(),
-				setHidden: vi.fn(),
-				isHidden: () => false,
-				focus: vi.fn(),
-				unfocus: vi.fn(),
-				isFocused: () => false,
-			})) as unknown as TUI["showOverlay"];
-			const handleWithout = tui.showOverlay(component, split.overlayOptions());
-			expect(handleWithout.getBounds?.()).toBeUndefined();
+			// Calls reach the base implementations for every known member.
+			adapted.hide();
+			expect(base.hide).toHaveBeenCalledOnce();
+			adapted.setHidden(true);
+			expect(base.setHidden).toHaveBeenCalledWith(true);
+			expect(adapted.isHidden()).toBe(false);
+			expect(base.isHidden).toHaveBeenCalledOnce();
+			adapted.focus();
+			expect(base.focus).toHaveBeenCalledOnce();
+			adapted.unfocus({ target: null });
+			expect(base.unfocus).toHaveBeenCalledWith({ target: null });
+			expect(adapted.isFocused()).toBe(false);
+			expect(base.isFocused).toHaveBeenCalledOnce();
+			expect(adapted.getBounds?.()).toBeUndefined();
+
+			// Members pi-tui has not introduced yet — string and symbol keyed —
+			// are reachable through the adapted handle with zero adapter changes.
+			expect(surface.getFreshBounds).toBeTypeOf("function");
+			expect((surface.getFreshBounds as () => string)()).toBe("fresh");
+			expect(surface[symbolKey]).toBeTypeOf("function");
+			expect((surface[symbolKey] as () => string)()).toBe("symbolic");
+
+			// Exactly the fullscreen-specific members shadow the base; every
+			// other member resolves through the wrapped handle's prototype.
+			expect(Object.getOwnPropertyNames(adapted).sort()).toEqual(["getBounds", "hide", "setHidden"]);
+			expect(Object.getOwnPropertySymbols(adapted)).toEqual([]);
+			for (const member of ["isHidden", "focus", "unfocus", "isFocused", "getFreshBounds"]) {
+				expect(Object.hasOwn(adapted, member)).toBe(false);
+			}
 		} finally {
-			state.baseShowOverlay = originalBase;
 			split.dispose();
 		}
 	});

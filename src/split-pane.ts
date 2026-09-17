@@ -8,6 +8,11 @@ const SGR_MOUSE = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/;
 const PI_084_REGULAR_RENDER_ADAPTER = Symbol("pi-atelier.regular-render-adapter");
 const PI_084_FULLSCREEN_LAYOUT_ADAPTER = Symbol("pi-atelier.fullscreen-layout-adapter");
 const PI_084_FULLSCREEN_OVERLAY_ADAPTER = Symbol("pi-atelier.fullscreen-overlay-adapter");
+/**
+ * Public alias for the private fullscreen-overlay-adapter stash symbol so
+ * contract tests can reference the real symbol instead of string-matching it.
+ */
+export const FULLSCREEN_OVERLAY_ADAPTER = PI_084_FULLSCREEN_OVERLAY_ADAPTER;
 
 interface RegularRenderAdapterState {
 	owner: object;
@@ -68,6 +73,7 @@ export interface SplitPaneControllerOptions {
 	subscribeInput?(handler: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
 	onResizeChange?(resizing: boolean): void;
 	onWarning?(message: string): void;
+	baseOverlayMethods?(tui: TUI): Pick<FullscreenOverlayAdapterState, "baseShowOverlay" | "baseHideOverlay">;
 }
 
 export interface SplitPaneController {
@@ -177,7 +183,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 
 	const findPrototypeOverlayMethods = (
 		nextTui: TUI,
-	): { showOverlay: TUI["showOverlay"]; hideOverlay: TUI["hideOverlay"] } | undefined => {
+	): Pick<FullscreenOverlayAdapterState, "baseShowOverlay" | "baseHideOverlay"> | undefined => {
 		let prototype = Object.getPrototypeOf(nextTui) as object | null;
 		let showOverlay: TUI["showOverlay"] | undefined;
 		let hideOverlay: TUI["hideOverlay"] | undefined;
@@ -190,7 +196,9 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 				hideOverlay = hideDescriptor.value as TUI["hideOverlay"];
 			prototype = Object.getPrototypeOf(prototype) as object | null;
 		}
-		return showOverlay && hideOverlay ? { showOverlay, hideOverlay } : undefined;
+		return showOverlay && hideOverlay
+			? { baseShowOverlay: showOverlay, baseHideOverlay: hideOverlay }
+			: undefined;
 	};
 
 	const isPiFullscreenRenderer = (): boolean => tui?.mode === "fullscreen" && isViewportTUI(tui);
@@ -287,9 +295,9 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		const currentState = adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER];
 		if (currentState?.owner === adapterOwner) return;
 		if (currentState) return;
-		const baseMethods = findPrototypeOverlayMethods(tui);
+		const baseMethods = options.baseOverlayMethods?.(tui) ?? findPrototypeOverlayMethods(tui);
 		if (!baseMethods) return;
-		const { showOverlay: baseShowOverlay, hideOverlay: baseHideOverlay } = baseMethods;
+		const { baseShowOverlay, baseHideOverlay } = baseMethods;
 		adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER] = {
 			owner: adapterOwner,
 			baseShowOverlay,
