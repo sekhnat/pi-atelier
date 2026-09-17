@@ -2793,3 +2793,65 @@ describe("todos panel", () => {
 		expect(rows).toContain("○ #1 Taskred");
 	});
 });
+
+describe("sidebar elapsed rendering", () => {
+	it("renders live and completed durations from the same clock domain", () => {
+		const running = withActivity({
+			phase: "running",
+			turnNumber: 1,
+			startedAt: 1_000,
+			activeTools: [
+				{ id: "read-1", name: "read", summary: "src/state.ts", status: "running", startedAt: 2_000 },
+			],
+			recentTools: [],
+			completedCount: 0,
+			failedCount: 0,
+		});
+		const liveRows = contentRows(renderSidebarLines(running, DEFAULT_CONFIG, theme, 44, 36, false, 6_500.25));
+		expect(liveRows.some((row) => row.includes("src/state.ts") && row.includes("4s"))).toBe(true);
+
+		const settled = withActivity({
+			phase: "settled",
+			startedAt: 1_000,
+			durationMs: 5_500.25,
+			activeTools: [],
+			recentTools: [
+				{
+					id: "read-1",
+					name: "read",
+					summary: "src/state.ts",
+					status: "done",
+					startedAt: 2_000,
+					durationMs: 4_500.25,
+				},
+			],
+			completedCount: 1,
+			failedCount: 0,
+		});
+		const settledRows = contentRows(
+			renderSidebarLines(settled, DEFAULT_CONFIG, theme, 44, 36, false, 6_500.25),
+		);
+		expect(settledRows.join("\n")).toContain("done 4s");
+		expect(settledRows.join("\n")).toContain("Last run · 5s");
+	});
+
+	it("orders concurrent tools by fractional start samples", () => {
+		const ordered = withActivity({
+			phase: "settled",
+			startedAt: 1_000,
+			durationMs: 2_000,
+			activeTools: [
+				{ id: "late", name: "bash", summary: "npm test", status: "running", startedAt: 2_000.75 },
+				{ id: "early", name: "read", summary: "a.ts", status: "running", startedAt: 2_000.25 },
+			],
+			recentTools: [],
+			completedCount: 0,
+			failedCount: 0,
+		});
+		const rows = contentRows(renderSidebarLines(ordered, DEFAULT_CONFIG, theme, 60, 36, false, 3_000));
+		const lateIndex = rows.findIndex((row) => row.includes("npm test"));
+		const earlyIndex = rows.findIndex((row) => row.includes("a.ts"));
+		expect(earlyIndex).toBeGreaterThanOrEqual(0);
+		expect(lateIndex).toBeGreaterThan(earlyIndex);
+	});
+});

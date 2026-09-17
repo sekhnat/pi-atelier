@@ -1,5 +1,6 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
+import { installElapsedClock } from "../src/elapsed-clock.js";
 import {
 	EMPTY_RUN_ACTIVITY,
 	createRunActivityTracker,
@@ -405,5 +406,107 @@ describe("summarizeTool", () => {
 			"package.json",
 		);
 		expect(summarizeTool("read", { path: "/repo-other/secret.txt" }, "/repo")).toBe("/repo-other/secret.txt");
+	});
+});
+
+describe("run activity elapsed clock", () => {
+	it("retains fractional-millisecond TTFT and TPS samples", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startResponse(1_000);
+		tracker.updateResponseEstimate(1, 1_820.25);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 820.25 });
+
+		tracker.updateResponseEstimate(40, 2_800.5);
+		expect(tracker.getSnapshot().performance).toEqual({
+			ttftMs: 820.25,
+			tokensPerSecond: 40 / 0.98025,
+			estimated: true,
+		});
+
+		tracker.finishResponse(120, 4_320.75);
+		expect(tracker.getSnapshot().performance?.ttftMs).toBe(820.25);
+		expect(tracker.getSnapshot().performance?.tokensPerSecond).toBeCloseTo(120 / 2.5005, 10);
+	});
+
+	it("retains fractional run and tool durations", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startRun(1_000);
+		tracker.startTool(
+			{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "/repo/a.ts" } },
+			2_000.5,
+		);
+		tracker.finishTool(
+			{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: {}, isError: false },
+			3_500.75,
+		);
+		tracker.settle(5_500.5);
+
+		const snapshot = tracker.getSnapshot();
+		expect(snapshot.durationMs).toBe(4_500.5);
+		expect(snapshot.recentTools.at(0)?.durationMs).toBe(1_500.25);
+	});
+
+	it("clamps end samples that precede their start samples to zero", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startRun(1_000);
+		tracker.startResponse(2_000);
+		tracker.updateResponseEstimate(1, 1_500);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 0 });
+
+		tracker.startTool(
+			{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "/repo/a.ts" } },
+			3_000,
+		);
+		tracker.finishTool(
+			{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: {}, isError: false },
+			2_500,
+		);
+		expect(tracker.getSnapshot().recentTools.at(0)?.durationMs).toBe(0);
+
+		tracker.settle(500);
+		expect(tracker.getSnapshot().durationMs).toBe(0);
+	});
+
+	it("keeps elapsed metrics on monotonic time when the wall clock jumps", () => {
+		let elapsed = 1_000;
+		const restoreClock = installElapsedClock(() => elapsed);
+		vi.useFakeTimers({ toFake: ["Date"] });
+		try {
+			vi.setSystemTime(50_000);
+			const tracker = createRunActivityTracker({ cwd: "/repo" });
+			tracker.startRun();
+			tracker.startResponse();
+			expect(Date.now()).toBe(50_000);
+
+			vi.setSystemTime(1_000);
+			elapsed = 1_820.25;
+			tracker.updateResponseEstimate(1);
+			expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 820.25 });
+
+			elapsed = 2_000.5;
+			tracker.startTool({
+				type: "tool_execution_start",
+				toolCallId: "read-1",
+				toolName: "read",
+				args: { path: "/repo/a.ts" },
+			});
+			elapsed = 3_000.75;
+			tracker.finishTool({
+				type: "tool_execution_end",
+				toolCallId: "read-1",
+				toolName: "read",
+				result: {},
+				isError: false,
+			});
+			expect(tracker.getSnapshot().recentTools.at(0)?.durationMs).toBe(1_000.25);
+
+			vi.setSystemTime(90_000);
+			elapsed = 5_000;
+			tracker.settle();
+			expect(tracker.getSnapshot().durationMs).toBe(4_000);
+		} finally {
+			restoreClock();
+			vi.useRealTimers();
+		}
 	});
 });

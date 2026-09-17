@@ -1,6 +1,7 @@
 import nodePath from "node:path";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { toDisplayPath } from "./display-path.js";
+import { elapsedNow } from "./elapsed-clock.js";
 import { sanitizeTerminalText } from "./sanitize.js";
 import type { DisplayValue, ResponsePerformance } from "./types.js";
 
@@ -106,7 +107,7 @@ export function createRunActivityTracker(options: RunActivityTrackerOptions): Ru
 }
 
 export function formatDuration(durationMs: number): string {
-	const normalized = normalizeTimestamp(durationMs);
+	const normalized = normalizeElapsedSample(durationMs);
 	const totalSeconds = Math.floor(normalized / 1_000);
 	if (totalSeconds < 1) return "<1s";
 	if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -164,7 +165,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 	startRun(now?: number): void {
 		this.phase = "running";
 		this.turnNumber = undefined;
-		this.startedAt = normalizeTimestamp(now ?? Date.now());
+		this.startedAt = normalizeElapsedSample(now ?? elapsedNow());
 		this.durationMs = undefined;
 		this.requestStartedAt = undefined;
 		this.firstTokenAt = undefined;
@@ -187,7 +188,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 	}
 
 	startResponse(now?: number): void {
-		this.requestStartedAt = normalizeTimestamp(now ?? Date.now());
+		this.requestStartedAt = normalizeElapsedSample(now ?? elapsedNow());
 		this.firstTokenAt = undefined;
 		this.performance = undefined;
 		this.notify();
@@ -201,7 +202,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		) {
 			return;
 		}
-		const observedAt = normalizeTimestamp(now ?? Date.now());
+		const observedAt = normalizeElapsedSample(now ?? elapsedNow());
 		if (this.firstTokenAt === undefined) {
 			this.firstTokenAt = observedAt;
 			this.performance = freezePerformance({
@@ -227,7 +228,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.firstTokenAt = undefined;
 		if (firstTokenAt === undefined || this.performance === undefined) return;
 
-		const generationDurationMs = Math.max(0, normalizeTimestamp(now ?? Date.now()) - firstTokenAt);
+		const generationDurationMs = Math.max(0, normalizeElapsedSample(now ?? elapsedNow()) - firstTokenAt);
 		if (!Number.isFinite(outputTokens) || outputTokens <= 0 || generationDurationMs <= 0) return;
 		this.performance = freezePerformance({
 			ttftMs: this.performance.ttftMs,
@@ -245,7 +246,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 			name: sanitizeToolName(event.toolName),
 			summary: summarizeTool(event.toolName, event.args, this.cwd),
 			status: "running",
-			startedAt: normalizeTimestamp(now ?? Date.now()),
+			startedAt: normalizeElapsedSample(now ?? elapsedNow()),
 		});
 		this.phase = "running";
 		this.durationMs = undefined;
@@ -259,7 +260,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		if (!active) return;
 
 		this.activeTools.delete(id);
-		const endedAt = normalizeTimestamp(now ?? Date.now());
+		const endedAt = normalizeElapsedSample(now ?? elapsedNow());
 		const status: ToolActivityStatus = event.isError ? "failed" : "done";
 		const completed = freezeTool({
 			...active,
@@ -279,7 +280,7 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		if (this.phase === "idle" && this.activeTools.size === 0) return;
 		if (this.phase === "settled" && this.activeTools.size === 0) return;
 
-		const settledAt = normalizeTimestamp(now ?? Date.now());
+		const settledAt = normalizeElapsedSample(now ?? elapsedNow());
 		const failedActiveTools = Array.from(this.activeTools.values(), (tool) =>
 			freezeTool({
 				...tool,
@@ -357,9 +358,9 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 	}
 }
 
-function normalizeTimestamp(value: number): number {
+function normalizeElapsedSample(value: number): number {
 	if (!Number.isFinite(value)) return 0;
-	return Math.max(0, Math.trunc(value));
+	return Math.max(0, value);
 }
 
 function freezePerformance(performance: ResponsePerformance): ResponsePerformance {

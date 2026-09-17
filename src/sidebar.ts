@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { basename } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, type OverlayHandle, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { elapsedNow } from "./elapsed-clock.js";
 import type { ThemeLike } from "./footer.js";
 import { aggregateMetrics, formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
@@ -873,7 +874,7 @@ export function renderSidebarLines(
 	width: number,
 	height: number,
 	colorEnabled = true,
-	now = Date.now(),
+	now = elapsedNow(),
 	resizing = false,
 ): string[] {
 	const palette = createPalette(theme, colorEnabled);
@@ -1130,7 +1131,7 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 					width,
 					height,
 					options.colorEnabled ?? true,
-					Date.now(),
+					elapsedNow(),
 					resizing,
 				);
 			} catch (error) {

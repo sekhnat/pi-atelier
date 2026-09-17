@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import atelierExtension, {
 	SIDEBAR_PANEL_EVENT_CHANNEL,
@@ -12,6 +12,11 @@ import {
 	loadConfig as loadAtelierConfig,
 	type saveUserConfigPatch as persistConfigPatch,
 } from "../src/config.js";
+import { installElapsedClock, resetElapsedClock } from "../src/elapsed-clock.js";
+
+afterEach(() => {
+	resetElapsedClock();
+});
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -1912,7 +1917,8 @@ describe("extension registration", () => {
 
 	it("renders live response performance in the configured footer", async () => {
 		vi.useFakeTimers();
-		vi.setSystemTime(1_000);
+		const elapsedClock = { value: 1_000 };
+		installElapsedClock(() => elapsedClock.value);
 		try {
 			const h = harness("tui", "linux", true);
 			await start(h);
@@ -1942,12 +1948,12 @@ describe("extension registration", () => {
 			);
 			expect(footer.render(160).join("\n")).toContain("TTFT ~ · TPS ~");
 
-			vi.setSystemTime(1_100);
+			elapsedClock.value = 1_100;
 			await h.handlers.get("before_provider_request")?.(
 				{ type: "before_provider_request", payload: {} },
 				h.ctx,
 			);
-			vi.setSystemTime(1_920);
+			elapsedClock.value = 1_920;
 			await h.handlers.get("message_update")?.(
 				{
 					type: "message_update",
@@ -1960,7 +1966,7 @@ describe("extension registration", () => {
 			expect(footerRequestRender).toHaveBeenCalled();
 			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~");
 
-			vi.setSystemTime(2_920);
+			elapsedClock.value = 2_920;
 			await h.handlers.get("message_update")?.(
 				{
 					type: "message_update",
@@ -1971,7 +1977,7 @@ describe("extension registration", () => {
 			);
 			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS ~20.0");
 
-			vi.setSystemTime(4_420);
+			elapsedClock.value = 4_420;
 			await h.handlers.get("message_end")?.(
 				{
 					type: "message_end",
@@ -1989,19 +1995,20 @@ describe("extension registration", () => {
 
 	it("measures TTFT from provider dispatch and final TPS from streamed generation", async () => {
 		vi.useFakeTimers();
-		vi.setSystemTime(1_000);
+		const elapsedClock = { value: 1_000 };
+		installElapsedClock(() => elapsedClock.value);
 		try {
 			const h = harness();
 			await start(h);
 			await command(h, "sidebar on");
 			await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
 
-			vi.setSystemTime(1_100);
+			elapsedClock.value = 1_100;
 			await h.handlers.get("before_provider_request")?.(
 				{ type: "before_provider_request", payload: {} },
 				h.ctx,
 			);
-			vi.setSystemTime(1_920);
+			elapsedClock.value = 1_920;
 			await h.handlers.get("message_update")?.(
 				{
 					type: "message_update",
@@ -2014,7 +2021,7 @@ describe("extension registration", () => {
 			const streamingText = h.overlays[0]?.component.render(44).join("\n") ?? "";
 			expect(streamingText).toContain("TTFT 820ms · TPS ~");
 
-			vi.setSystemTime(2_920);
+			elapsedClock.value = 2_920;
 			await h.handlers.get("message_update")?.(
 				{
 					type: "message_update",
@@ -2026,7 +2033,7 @@ describe("extension registration", () => {
 			const estimatedText = h.overlays[0]?.component.render(44).join("\n") ?? "";
 			expect(estimatedText).toContain("TTFT 820ms · TPS ~20.0");
 
-			vi.setSystemTime(4_420);
+			elapsedClock.value = 4_420;
 			await h.handlers.get("message_end")?.(
 				{
 					type: "message_end",
@@ -2111,7 +2118,8 @@ describe("extension registration", () => {
 
 	it("updates recent tool results and settles the sidebar without continuing animation", async () => {
 		vi.useFakeTimers();
-		vi.setSystemTime(1_000);
+		const elapsedClock = { value: 1_000 };
+		installElapsedClock(() => elapsedClock.value);
 		try {
 			const h = harness();
 			await start(h);
@@ -2127,7 +2135,7 @@ describe("extension registration", () => {
 				},
 				h.ctx,
 			);
-			vi.setSystemTime(2_500);
+			elapsedClock.value = 2_500;
 			await h.handlers.get("tool_execution_end")?.(
 				{
 					type: "tool_execution_end",
@@ -2149,7 +2157,7 @@ describe("extension registration", () => {
 			vi.advanceTimersByTime(1_000);
 			expect(h.overlays[0]?.requestRender.mock.calls.length).toBeGreaterThan(rendersBeforeTick);
 
-			vi.setSystemTime(4_000);
+			elapsedClock.value = 4_000;
 			await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
 			const settledRenderCount = h.overlays[0]?.requestRender.mock.calls.length ?? 0;
 			const settledText = h.overlays[0]?.component.render(44).join("\n") ?? "";
@@ -2275,7 +2283,8 @@ describe("extension registration", () => {
 
 	it("ignores stale activity events after a replacement session becomes active", async () => {
 		vi.useFakeTimers();
-		vi.setSystemTime(1_000);
+		const elapsedClock = { value: 1_000 };
+		installElapsedClock(() => elapsedClock.value);
 		try {
 			const h = harness();
 			const oldCtx = h.ctx;
