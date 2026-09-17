@@ -224,6 +224,21 @@ describe("configuration", () => {
 		expect(result.config.showSessionActions).toBe(true);
 	});
 
+	it("keeps custom-base values for global-user-only fields when user input omits them", () => {
+		const base = {
+			...DEFAULT_CONFIG,
+			showSidebarOnStartup: false,
+			completionNotifications: false,
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+		};
+		const result = validateConfig({ shortcut: "ctrl+x" }, base);
+		expect(result.config.showSidebarOnStartup).toBe(false);
+		expect(result.config.completionNotifications).toBe(false);
+		expect(result.config.showSidebarAgent).toBe(false);
+		expect(result.config.showSidebarTodos).toBe(false);
+	});
+
 	it("applies non-scoped fields in user, project, then session order", async () => {
 		await writeJson(userPath, { showSessionActions: false, showSidebarToolNames: false });
 		await writeJson(projectPath, { showSessionActions: true, showSidebarToolNames: true });

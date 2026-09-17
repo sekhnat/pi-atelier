@@ -402,24 +402,49 @@ function applyGlobalSidebarCompatibility(
 	if (typeof global?.showSidebarTodos === "boolean") config.showSidebarTodos = global.showSidebarTodos;
 }
 
-export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
+/**
+ * The single resolution pipeline behind the public entry points: applies the
+ * non-display fields per layer in fixed user → project → session order
+ * (global-user-only fields filter on apply inside applyNonDisplay, so the
+ * re-override blocks net to nothing and are not needed), resolves the display
+ * layers and the sidebar layout against `base`, assigns them, and derives the
+ * legacy panel booleans from the single layout projection. A missing entry in
+ * the layout keeps the fallback value.
+ */
+function resolveConfig(
+	layers: { user?: unknown; project?: unknown; session?: unknown },
+	options: { base?: AtelierConfig } = {},
+): ConfigLoadResult {
+	const base = options.base ?? DEFAULT_CONFIG;
 	const config = cloneConfig(base);
 	const warnings: string[] = [];
-	applyNonDisplay(input, config, warnings);
-	const inputRecord = record(input);
-	const displayLayers: DisplayLayerState = inputRecord ? { user: inputRecord } : {};
+	applyNonDisplay(layers.user, config, warnings, "user");
+	if (layers.project !== undefined) applyNonDisplay(layers.project, config, warnings, "project");
+	if (layers.session !== undefined) applyNonDisplay(layers.session, config, warnings, "session");
+	const userRecord = record(layers.user);
+	const projectRecord = record(layers.project);
+	const sessionRecord = record(layers.session);
+	const displayLayers: DisplayLayerState = {
+		...(userRecord ? { user: userRecord } : {}),
+		...(projectRecord ? { project: projectRecord } : {}),
+		...(sessionRecord ? { session: sessionRecord } : {}),
+	};
 	const resolved = resolveDisplayLayers(displayLayers, base);
 	const sidebar = resolveSidebarLayout(displayLayers, base);
 	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
 	if (sidebar.authoritative) {
 		Object.assign(config, legacyPanelVisibilityFromLayout(sidebar.layout, config));
-	} else applyGlobalSidebarCompatibility(config, input, base);
+	}
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
 		displayLayers,
 		displayProvenance: resolved.provenance,
 	};
+}
+
+export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
+	return resolveConfig({ user: input }, { base });
 }
 
 async function readJson(path: string): Promise<{ value?: unknown; warning?: string }> {
