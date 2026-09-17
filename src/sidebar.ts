@@ -884,6 +884,14 @@ export function renderSidebarLines(
 	const layout = sidebarLayout(safeWidth, config);
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
 	const workspace = workspaceRows(snapshot, layout, palette);
+	// Keep panel content grouped while making the user-owned order the only
+	// source of top-to-bottom composition. Contributed panels are available only
+	// when a current registry snapshot exists; capability-negotiated defaults
+	// fill unconfigured panels into the effective layout, while saved entries
+	// remain the sole authority over explicit order and visibility.
+	const availablePanels = snapshot.sidebarPanels ?? [];
+	const contributed = new Map(availablePanels.map((panel) => [panel.id, panel]));
+	const effectiveLayout = resolveEffectiveSidebarPanelLayout(config.sidebarPanelLayout, availablePanels);
 	const groups: SidebarGroup[] = [
 		...(resizing
 			? [
@@ -1018,14 +1026,6 @@ export function renderSidebarLines(
 		})),
 	];
 
-	// Keep panel content grouped while making the user-owned order the only
-	// source of top-to-bottom composition. Contributed panels are available only
-	// when a current registry snapshot exists; capability-negotiated defaults
-	// fill unconfigured panels into the effective layout, while saved entries
-	// remain the sole authority over explicit order and visibility.
-	const availablePanels = snapshot.sidebarPanels ?? [];
-	const contributed = new Map(availablePanels.map((panel) => [panel.id, panel]));
-	const effectiveLayout = resolveEffectiveSidebarPanelLayout(config.sidebarPanelLayout, availablePanels);
 	const grouped = new Map<string, SidebarGroup[]>();
 	for (const group of groups) {
 		const id = group.panelId;
