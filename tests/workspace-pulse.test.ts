@@ -124,6 +124,87 @@ describe("createWorkspacePulseRefresh", () => {
 		expect(inspect).toHaveBeenCalledOnce();
 		expect(publish).not.toHaveBeenCalled();
 	});
+
+	it("aborts the enabled lifetime and rejects stale results when disabled", async () => {
+		vi.useFakeTimers();
+		const running = deferred<WorkspacePulseInspection>();
+		let observedSignal: AbortSignal | undefined;
+		const inspect = vi.fn().mockImplementation((signal: AbortSignal) => {
+			observedSignal = signal;
+			return running.promise;
+		});
+		const publish = vi.fn();
+		const refresh = createWorkspacePulseRefresh({ inspect, publish, delayMs: 250 });
+
+		refresh.request();
+		await vi.advanceTimersByTimeAsync(250);
+		expect(inspect).toHaveBeenCalledOnce();
+		refresh.setEnabled(false);
+		expect(observedSignal?.aborted).toBe(true);
+		running.resolve(clean);
+		await vi.runAllTimersAsync();
+
+		expect(publish).not.toHaveBeenCalled();
+	});
+
+	it("cancels a pending debounce when disabled", async () => {
+		vi.useFakeTimers();
+		const inspect = vi.fn().mockResolvedValue(clean);
+		const publish = vi.fn();
+		const refresh = createWorkspacePulseRefresh({ inspect, publish, delayMs: 250 });
+
+		refresh.request();
+		refresh.setEnabled(false);
+		await vi.runAllTimersAsync();
+		expect(inspect).not.toHaveBeenCalled();
+		expect(publish).not.toHaveBeenCalled();
+
+		refresh.setEnabled(true);
+		refresh.request();
+		await vi.advanceTimersByTimeAsync(250);
+		expect(inspect).toHaveBeenCalledOnce();
+		expect(publish).toHaveBeenCalledWith(clean);
+	});
+
+	it("releases flush waiters promptly when disabled", async () => {
+		vi.useFakeTimers();
+		const running = deferred<WorkspacePulseInspection>();
+		const inspect = vi.fn().mockReturnValue(running.promise);
+		const publish = vi.fn();
+		const refresh = createWorkspacePulseRefresh({ inspect, publish, delayMs: 250 });
+
+		const flushed = refresh.flush();
+		expect(inspect).toHaveBeenCalledOnce();
+		refresh.setEnabled(false);
+		await flushed;
+		expect(publish).not.toHaveBeenCalled();
+
+		running.resolve(clean);
+		await vi.runAllTimersAsync();
+		expect(publish).not.toHaveBeenCalled();
+	});
+
+	it("creates a fresh signal for each enabled lifetime", async () => {
+		const signals: AbortSignal[] = [];
+		const inspect = vi.fn().mockImplementation((signal: AbortSignal) => {
+			signals.push(signal);
+			return Promise.resolve(clean);
+		});
+		const publish = vi.fn();
+		const refresh = createWorkspacePulseRefresh({ inspect, publish, delayMs: 0 });
+
+		refresh.request();
+		await refresh.flush();
+		refresh.setEnabled(false);
+		refresh.setEnabled(true);
+		refresh.request();
+		await refresh.flush();
+
+		expect(inspect).toHaveBeenCalledTimes(2);
+		expect(signals[0]?.aborted).toBe(true);
+		expect(signals[1]?.aborted).toBe(false);
+		expect(publish).toHaveBeenCalledTimes(2);
+	});
 });
 
 describe("inspectWorkspacePulse", () => {
@@ -283,5 +364,172 @@ describe("inspectWorkspacePulse", () => {
 			expect.arrayContaining(["4b825dc642cb6eb9a060e54bf8d69288fbee4904"]),
 			{ timeout: 2_000 },
 		);
+	});
+
+	// Fast path: valid status with no tracked records avoids HEAD and diff commands.
+	it("returns a clean snapshot after discovery and status without HEAD or diff commands", async () => {
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head main\0"));
+
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repo" })).resolves.toEqual({
+			kind: "available",
+			root: "/repo",
+			relativeCwd: "",
+			branch: "main",
+			snapshot: {
+				trackedFiles: 0,
+				untrackedFiles: 0,
+				linesAdded: 0,
+				linesRemoved: 0,
+				binaryFiles: 0,
+				submodules: 0,
+				conflicts: 0,
+			},
+		});
+		expect(exec).toHaveBeenCalledTimes(2);
+		expect(exec).toHaveBeenLastCalledWith(
+			"git",
+			["-C", "/repo", "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
+			{ timeout: 2_000 },
+		);
+	});
+
+	it("counts untracked files on the fast path without running diffs", async () => {
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head main\0? a.txt\0? b.txt\0"));
+
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repo" })).resolves.toMatchObject({
+			kind: "available",
+			branch: "main",
+			snapshot: { trackedFiles: 0, untrackedFiles: 2, linesAdded: 0, linesRemoved: 0 },
+		});
+		expect(exec).toHaveBeenCalledTimes(2);
+	});
+
+	it("takes the fast path for an unborn repository without tracked changes", async () => {
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(result("# branch.oid (initial)\0# branch.head main\0? notes.md\0"));
+
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repo" })).resolves.toMatchObject({
+			kind: "available",
+			branch: "main",
+			snapshot: { trackedFiles: 0, untrackedFiles: 1 },
+		});
+		expect(exec).toHaveBeenCalledTimes(2);
+	});
+
+	it("retains full diff accounting when tracked changes exist", async () => {
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(
+				result(
+					["# branch.oid abc", "# branch.head main", "1 .M N... 100644 100644 100644 aaa aaa a.ts"].join(
+						"\0",
+					),
+				),
+			)
+			.mockResolvedValueOnce(result("tree-id\n"))
+			.mockResolvedValueOnce(result("3\t1\ta.ts\0"));
+
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repo" })).resolves.toMatchObject({
+			kind: "available",
+			branch: "main",
+			snapshot: { trackedFiles: 1, linesAdded: 3, linesRemoved: 1 },
+		});
+		expect(exec).toHaveBeenCalledTimes(4);
+	});
+
+	it("does not take the fast path for conflicts or changed submodules", async () => {
+		const conflictExec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(
+				result(
+					[
+						"# branch.oid abc",
+						"# branch.head main",
+						"u UU N... 100644 100644 100644 100644 ddd eee fff c.txt",
+					].join("\0"),
+				),
+			)
+			.mockResolvedValueOnce(result("tree-id\n"))
+			.mockResolvedValueOnce(result("3\t4\tc.txt\0"));
+		await expect(inspectWorkspacePulse({ exec: conflictExec, cwd: "/repo" })).resolves.toMatchObject({
+			snapshot: { trackedFiles: 1, conflicts: 1, linesAdded: 3, linesRemoved: 4 },
+		});
+		expect(conflictExec).toHaveBeenCalledTimes(4);
+
+		const submoduleExec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(
+				result(
+					[
+						"# branch.oid abc",
+						"# branch.head main",
+						"1 .M S.M. 160000 160000 160000 ccc ccc modules/lib",
+					].join("\0"),
+				),
+			)
+			.mockResolvedValueOnce(result("tree-id\n"))
+			.mockResolvedValueOnce(result("1\t1\tmodules/lib\0"));
+		await expect(inspectWorkspacePulse({ exec: submoduleExec, cwd: "/repo" })).resolves.toMatchObject({
+			snapshot: { trackedFiles: 1, submodules: 1, linesAdded: 0, linesRemoved: 0 },
+		});
+		expect(submoduleExec).toHaveBeenCalledTimes(4);
+	});
+
+	it("does not publish a clean result when cancelled before or after status", async () => {
+		const controller = new AbortController();
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head main\0"));
+
+		controller.abort();
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repo", signal: controller.signal })).resolves.toEqual({
+			kind: "unavailable",
+		});
+		// A cancelled lifetime starts no Git commands and cannot publish a clean result.
+		expect(exec).not.toHaveBeenCalled();
+
+		// An executor that resolves after abort cannot publish a clean fast-path result either.
+		const lateController = new AbortController();
+		const lateExec = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockImplementation(async () => {
+				// Abort exactly when status resolves; this executor ignores the signal.
+				lateController.abort();
+				return result("# branch.oid abc\0# branch.head main\0");
+			});
+		await expect(
+			inspectWorkspacePulse({ exec: lateExec, cwd: "/repo", signal: lateController.signal }),
+		).resolves.toEqual({ kind: "unavailable" });
+		expect(lateExec).toHaveBeenCalledTimes(2);
+	});
+
+	it("reports not-repo and unavailable states without HEAD or diff commands", async () => {
+		const notRepo = vi.fn().mockResolvedValue(result("", 128, "fatal: not a git repository"));
+		await expect(inspectWorkspacePulse({ exec: notRepo, cwd: "/plain" })).resolves.toEqual({
+			kind: "not-repo",
+		});
+		expect(notRepo).toHaveBeenCalledTimes(1);
+
+		const unavailable = vi
+			.fn()
+			.mockResolvedValueOnce(result("true\n/repo\n"))
+			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head main\0", 1, "fatal: bad object"));
+		await expect(inspectWorkspacePulse({ exec: unavailable, cwd: "/repo" })).resolves.toEqual({
+			kind: "unavailable",
+		});
+		expect(unavailable).toHaveBeenCalledTimes(2);
 	});
 });

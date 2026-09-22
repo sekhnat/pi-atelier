@@ -9,9 +9,14 @@ import {
 	PRODUCT_SEGMENT_ORDER,
 } from "./display.js";
 import {
-	DEFAULT_CONFIG,
+	type DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	legacyPanelVisibilityFromLayout,
+	normalizeSidebarPanelLayout,
+} from "./sidebar-panels.js";
+import {
 	type AtelierConfig,
 	type ConfigurationSource,
+	DEFAULT_CONFIG,
 	type DisplayLayerState,
 	type DisplayProvenance,
 	type DisplaySettings,
@@ -20,11 +25,6 @@ import {
 	type SegmentLayout,
 	type TemplateName,
 } from "./types.js";
-import {
-	type DEFAULT_SIDEBAR_PANEL_LAYOUT,
-	legacyPanelVisibilityFromLayout,
-	normalizeSidebarPanelLayout,
-} from "./sidebar-panels.js";
 
 export interface ConfigLoadResult {
 	config: AtelierConfig;
@@ -344,6 +344,7 @@ const GLOBAL_USER_ONLY_FIELDS = [
 	"completionNotifications",
 	"showSidebarAgent",
 	"showSidebarTodos",
+	"showSessionRibbon",
 ] as const satisfies readonly (keyof AtelierConfig)[];
 
 function applyNonDisplay(

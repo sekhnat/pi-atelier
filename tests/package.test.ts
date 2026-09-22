@@ -84,4 +84,18 @@ describe("npm package contract", () => {
 		expect(readme).toContain("/atelier display");
 		expect(readme).toContain("Settings → Display");
 	});
+
+	it("documents the default-off session ribbon and its Nerd Font requirement", async () => {
+		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+		expect(readme).toContain("showSessionRibbon");
+		expect(readme).toContain('"showSessionRibbon": false');
+		// The preference is documented as user-only and disabled by default.
+		expect(readme).toContain("disabled by default");
+		expect(readme).toContain("remain user-only");
+		// The Nerd Font requirement and the no-font-installation guarantee are stated.
+		expect(readme).toContain("Nerd Font");
+		expect(readme).toContain("does not bundle or install fonts");
+		// The fallback contract keeps the complete Status Rail available.
+		expect(readme).toContain("complete plain Status Rail renders instead");
+	});
 });

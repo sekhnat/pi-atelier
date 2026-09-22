@@ -884,3 +884,82 @@ describe("fullscreen Sidebar overlay handle contract", () => {
 		}
 	});
 });
+
+describe("image compositor binding", () => {
+	it("repairs fullscreen sidebar cells on image rows via the shared compositor", () => {
+		const renderer = new TuiAltScreen({
+			columns: 120,
+			rows: 36,
+			write: vi.fn(),
+			hideCursor: vi.fn(),
+			showCursor: vi.fn(),
+		} as never);
+		renderer.requestRender = vi.fn();
+		renderer.setLayoutRoot({ render: (width: number) => [`main:${width}`], invalidate() {} });
+		const tui = stableTuiReference(() => renderer as unknown as TUI);
+		const split = createSplitPaneController();
+		type Composite = (lines: string[], width: number, height: number) => string[];
+		const hookedRenderer = renderer as unknown as { compositeOverlays: Composite };
+
+		try {
+			split.attach(tui);
+			split.show();
+			// The overlay adapter captures this component as the fullscreen Sidebar.
+			tui.showOverlay({ render: () => ["SIDEBAR LINE"], invalidate() {} }, split.overlayOptions());
+
+			const imageRow = `${"x".repeat(10)}\u001b_Ga=T,f=100,q=2,i=7,r=3;AAAA\u001b\\`;
+			const composed = hookedRenderer.compositeOverlays([imageRow], 120, 36);
+
+			// The image row gained the sidebar cells at the sidebar column, and the
+			// untouched graphics command is redrawn after text at its column.
+			expect(composed[0]).toContain("SIDEBAR LINE");
+			expect(composed[0]).toContain("\u001b[11G\u001b_Ga=T");
+		} finally {
+			split.dispose();
+		}
+	});
+
+	it("releases the compositor adapter on split-pane disposal", () => {
+		const renderer = new TuiAltScreen({ columns: 120, rows: 36, write: vi.fn() } as never);
+		renderer.requestRender = vi.fn();
+		const tui = stableTuiReference(() => renderer as unknown as TUI);
+		const split = createSplitPaneController();
+		split.attach(tui);
+
+		type Composite = (lines: string[], width: number, height: number) => string[];
+		const hookedRenderer = renderer as unknown as { compositeOverlays: Composite };
+		const base = (TuiAltScreen.prototype as unknown as { compositeOverlays: Composite }).compositeOverlays;
+		expect(hookedRenderer.compositeOverlays).not.toBe(base);
+		split.dispose();
+		expect(hookedRenderer.compositeOverlays).toBe(base);
+	});
+});
+
+describe("fullscreen selection adapter", () => {
+	it("restores the selection seam on disposal", () => {
+		const renderer = new TuiAltScreen({ columns: 120, rows: 36, write: vi.fn() } as never);
+		renderer.requestRender = vi.fn();
+		renderer.setLayoutRoot({ render: (width: number) => [`main:${width}`], invalidate() {} });
+		const tui = stableTuiReference(() => renderer as unknown as TUI);
+		const split = createSplitPaneController();
+		split.attach(tui);
+		split.show();
+
+		type SelectionColumns = (
+			line: string,
+			row: number,
+			selection: { start: { scrollView?: unknown } },
+			minColumn?: number,
+			maxColumn?: number,
+		) => { start: number; end: number };
+		const hookedRenderer = renderer as unknown as { getSelectionColumns?: SelectionColumns };
+		const base = (TuiAltScreen.prototype as unknown as { getSelectionColumns: SelectionColumns })
+			.getSelectionColumns;
+
+		// Synced through the reconciliation path in fullscreen.
+		expect(hookedRenderer.getSelectionColumns).not.toBe(base);
+		split.dispose();
+		// Restore only when the current owner token matches.
+		expect(hookedRenderer.getSelectionColumns).toBe(base);
+	});
+});

@@ -2,12 +2,29 @@ import type { Component, OverlayHandle, OverlayOptions, TUI } from "@earendil-wo
 import { HStack, isViewportTUI, matchesKey } from "@earendil-works/pi-tui";
 
 const ENABLE_MOUSE = "\u001b[?1002h\u001b[?1006h";
+
+import { createImageCompositorBinding } from "./image-compositor.js";
+
 const DISABLE_MOUSE = "\u001b[?1006l\u001b[?1002l";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: regex intentionally matches terminal control/ANSI bytes to strip them
 const SGR_MOUSE = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])$/;
 const PI_084_REGULAR_RENDER_ADAPTER = Symbol("pi-atelier.regular-render-adapter");
 const PI_084_FULLSCREEN_LAYOUT_ADAPTER = Symbol("pi-atelier.fullscreen-layout-adapter");
 const PI_084_FULLSCREEN_OVERLAY_ADAPTER = Symbol("pi-atelier.fullscreen-overlay-adapter");
+const PI_084_FULLSCREEN_SELECTION_ADAPTER = Symbol("pi-atelier.fullscreen-selection-adapter");
+
+type SelectionColumns = (
+	line: string,
+	row: number,
+	selection: { start: { scrollView?: unknown } },
+	minColumn?: number,
+	maxColumn?: number,
+) => { start: number; end: number };
+
+interface FullscreenSelectionAdapterState {
+	owner: object;
+	baseSelectionColumns: SelectionColumns;
+}
 /**
  * Public alias for the private fullscreen-overlay-adapter stash symbol so
  * contract tests can reference the real symbol instead of string-matching it.
@@ -37,6 +54,8 @@ type AdaptedTui = TUI & {
 	[PI_084_REGULAR_RENDER_ADAPTER]: RegularRenderAdapterState | undefined;
 	[PI_084_FULLSCREEN_LAYOUT_ADAPTER]: FullscreenLayoutAdapterState | undefined;
 	[PI_084_FULLSCREEN_OVERLAY_ADAPTER]: FullscreenOverlayAdapterState | undefined;
+	[PI_084_FULLSCREEN_SELECTION_ADAPTER]: FullscreenSelectionAdapterState | undefined;
+	getSelectionColumns?: SelectionColumns;
 	layoutRoot?: Component;
 	setLayoutRoot(component: Component | undefined): void;
 };
@@ -165,6 +184,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 	let resizeMouseTerminal: TUI["terminal"] | undefined;
 	let fullscreenSidebarComponent: Component | undefined;
 	let fullscreenSidebarHidden = false;
+	let imageCompositor: ReturnType<typeof createImageCompositorBinding> | undefined;
 	let controller: SplitPaneController;
 	const adapterOwner = {};
 
@@ -287,6 +307,58 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			adaptedTui.setLayoutRoot(currentState.originalRoot);
 		}
 		adaptedTui[PI_084_FULLSCREEN_LAYOUT_ADAPTER] = undefined;
+	};
+
+	const syncFullscreenSelectionAdapter = () => {
+		if (!isPiFullscreenRenderer() || !tui) return;
+		const adaptedTui = tui as AdaptedTui;
+		if (adaptedTui[PI_084_FULLSCREEN_SELECTION_ADAPTER]) return;
+		// Read the concrete method, not a forwarding function from Pi's stable proxy.
+		let prototype = Object.getPrototypeOf(tui);
+		while (prototype) {
+			const base = Object.getOwnPropertyDescriptor(prototype, "getSelectionColumns")?.value;
+			if (typeof base === "function") {
+				const baseSelectionColumns = base as SelectionColumns;
+				adaptedTui[PI_084_FULLSCREEN_SELECTION_ADAPTER] = { owner: adapterOwner, baseSelectionColumns };
+				adaptedTui.getSelectionColumns = function (
+					this: TUI,
+					line: string,
+					row: number,
+					selection: { start: { scrollView?: unknown } },
+					minColumn?: number,
+					maxColumn?: number,
+				) {
+					const columns = baseSelectionColumns.call(this, line, row, selection, minColumn, maxColumn);
+					// Pi falls back to screen selection when a drag starts outside a ScrollView
+					// (e.g. the editor). This method serves both highlighting and OSC 52 copying.
+					if (
+						!selection.start.scrollView &&
+						fullscreenSidebarComponent &&
+						!fullscreenSidebarHidden &&
+						!this.hasOverlay()
+					) {
+						const width = this.terminal.columns;
+						const sidebar = effectiveSidebarWidth(width);
+						if (sidebar > 0) {
+							const mainWidth = width - sidebar;
+							return { start: Math.min(columns.start, mainWidth), end: Math.min(columns.end, mainWidth) };
+						}
+					}
+					return columns;
+				};
+				return;
+			}
+			prototype = Object.getPrototypeOf(prototype);
+		}
+	};
+
+	const restoreFullscreenSelectionAdapter = () => {
+		if (!tui) return;
+		const adaptedTui = tui as AdaptedTui;
+		const state = adaptedTui[PI_084_FULLSCREEN_SELECTION_ADAPTER];
+		if (state?.owner !== adapterOwner) return;
+		adaptedTui.getSelectionColumns = state.baseSelectionColumns;
+		adaptedTui[PI_084_FULLSCREEN_SELECTION_ADAPTER] = undefined;
 	};
 
 	const syncFullscreenOverlayAdapter = () => {
@@ -416,9 +488,11 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 	};
 
 	const requestRender = () => {
+		imageCompositor?.sync();
 		syncRegularRenderAdapter();
 		syncFullscreenLayoutAdapter();
 		syncFullscreenOverlayAdapter();
+		syncFullscreenSelectionAdapter();
 		tui?.requestRender();
 	};
 
@@ -454,6 +528,18 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		if (tui === nextTui) return;
 		if (tui) throw new Error("Split pane is already attached to another TUI");
 		tui = nextTui;
+		imageCompositor = createImageCompositorBinding(nextTui, (width) => {
+			if (!isPiFullscreenRenderer() || fullscreenSidebarHidden || !fullscreenSidebarComponent) {
+				return undefined;
+			}
+			const sidebar = effectiveSidebarWidth(width);
+			if (sidebar === 0) return undefined;
+			return {
+				column: width - sidebar,
+				width: sidebar,
+				lines: fullscreenSidebarComponent.render(sidebar),
+			};
+		});
 		reconcileResizeWidth(nextTui.terminal.columns);
 		syncOverlayWidth(nextTui.terminal.columns);
 		syncRegularRenderAdapter();
@@ -590,7 +676,10 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			fullscreenSidebarHidden = false;
 			restoreRegularRenderAdapter();
 			restoreFullscreenOverlayAdapter();
+			restoreFullscreenSelectionAdapter();
 			restoreFullscreenLayoutAdapter();
+			imageCompositor?.dispose();
+			imageCompositor = undefined;
 			tui?.requestRender();
 			tui = undefined;
 		},

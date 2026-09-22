@@ -15,6 +15,23 @@ export interface ThemeLike {
 const WORKING_DOT_FRAMES = ["...", "..", "."] as const;
 const WORKING_ANIMATION_INTERVAL_MS = 400;
 
+// Nerd Font glyphs, matching the icon vocabulary used by shell prompts. Used
+// only by the opt-in session ribbon surfaces; the plain Status Rail stays text-only.
+const FOOTER_ICONS = {
+	model: "\ueb08", // nf-cod-hubot
+	thinking: "\uf0eb", // nf-fa-lightbulb
+	git: "\uf418", // nf-oct-git_branch (Starship's Nerd Font preset)
+	workspace: "\uf07b", // nf-fa-folder
+	input: "\uf019", // nf-fa-download
+	output: "\uf093", // nf-fa-upload
+	cache: "\uf1c0", // nf-fa-database
+	performance: "\uf017", // nf-fa-clock
+	speed: "\uf0e7", // nf-fa-bolt
+	context: "\uf2db", // nf-fa-microchip
+	autoCompact: "\uf021", // nf-fa-refresh
+	menu: "\uf013", // nf-fa-gear
+	separator: "\ue0b1", // nf-pl-right_soft_divider
+} as const;
 type FooterZone = "left" | "right";
 type FooterItemId =
 	| "brand"
@@ -22,6 +39,7 @@ type FooterItemId =
 	| "activity"
 	| "model"
 	| "thinking"
+	| "workspace"
 	| "git"
 	| "input"
 	| "output"
@@ -39,6 +57,54 @@ interface FooterItem {
 	dropRank: number;
 	required: boolean;
 }
+
+/** Ribbon render surfaces: the prompt-style header and the compact telemetry row. */
+type FooterSurface = "header" | "telemetry";
+
+const RIBBON_HEADER_ITEMS = new Set<FooterItemId>([
+	"activity",
+	"model",
+	"thinking",
+	"workspace",
+	"git",
+	"context",
+]);
+
+// Related readings share a quiet space; separate concerns get a visible divider.
+const RIBBON_ITEM_GROUP: Record<FooterItemId, string> = {
+	brand: "brand",
+	status: "status",
+	activity: "activity",
+	model: "model",
+	thinking: "model",
+	workspace: "workspace",
+	git: "workspace",
+	input: "usage",
+	output: "usage",
+	cache: "usage",
+	cost: "usage",
+	performance: "performance",
+	context: "context",
+	menu: "menu",
+};
+
+// Ribbon width-drop order: secondary detail gives up first; required state remains.
+const RIBBON_DROP = {
+	thinking: 10,
+	cost: 20,
+	input: 40,
+	output: 40,
+	performance: 45,
+	workspace: 50,
+	cache: 50,
+	git: 55,
+	model: 60,
+	menu: 60,
+	activity: Number.POSITIVE_INFINITY,
+	context: Number.POSITIVE_INFINITY,
+	brand: Number.POSITIVE_INFINITY,
+	status: Number.POSITIVE_INFINITY,
+} as const;
 
 const DROP = {
 	brand: 0,
@@ -388,6 +454,323 @@ export function renderFooterLine(
 	return truncateToWidth(line, width, "");
 }
 
+/**
+ * Ribbon item builder for the opt-in session-ribbon surfaces. It reuses the
+ * plain rail's value formatters and metric meanings but renders Nerd Font
+ * prompt icons; the plain Status Rail path above stays untouched.
+ */
+function buildRibbonItems(
+	state: FooterState,
+	config: AtelierConfig,
+	theme: ThemeLike,
+	colorEnabled: boolean,
+	workingDots: string,
+	surface: FooterSurface,
+): FooterItem[] {
+	const palette = createPalette(theme, colorEnabled);
+	const items: FooterItem[] = [];
+	const itemIds = new Set<FooterItemId>();
+	const icon = (symbol: string, text: string, role: PaletteRole = "muted"): string =>
+		`${palette.paint(role, symbol)} ${text}`;
+	const add = (item: FooterItem): void => {
+		if (itemIds.has(item.id)) return;
+		itemIds.add(item.id);
+		items.push(item);
+	};
+
+	for (const entry of config.segmentLayout) {
+		if (!entry.visible) continue;
+		const segment = entry.id;
+
+		if (surface === "header") {
+			if (segment === "activity") {
+				add({
+					id: "activity",
+					zone: "left",
+					full: activityText(state, palette, theme, workingDots, false),
+					compact: activityText(state, palette, theme, workingDots, true),
+					dropRank: RIBBON_DROP.activity,
+					required: true,
+				});
+				continue;
+			}
+
+			if (segment === "model") {
+				const model = state.modelId ? sanitize(state.modelId) : "";
+				if (model) {
+					add({
+						id: "model",
+						zone: "left",
+						full: icon(FOOTER_ICONS.model, palette.paint("accent", theme.bold(model)), "accent"),
+						compact: icon(
+							FOOTER_ICONS.model,
+							palette.paint("accent", theme.bold(truncateToWidth(model, 24, "…"))),
+							"accent",
+						),
+						dropRank: RIBBON_DROP.model,
+						required: false,
+					});
+				}
+				const thinking = state.thinkingLevel ? sanitize(state.thinkingLevel) : "";
+				if (thinking) {
+					const role: PaletteRole = thinking === "off" ? "dim" : "accent";
+					add({
+						id: "thinking",
+						zone: "left",
+						full: icon(FOOTER_ICONS.thinking, palette.paint(role, thinking), role),
+						compact: icon(FOOTER_ICONS.thinking, palette.paint(role, thinking), role),
+						dropRank: RIBBON_DROP.thinking,
+						required: false,
+					});
+				}
+				continue;
+			}
+
+			if (segment === "git") {
+				const workspace = state.workspaceLabel ? sanitize(state.workspaceLabel) : "";
+				if (workspace) {
+					add({
+						id: "workspace",
+						zone: "left",
+						full: icon(FOOTER_ICONS.workspace, palette.paint("cache", workspace), "cache"),
+						compact: icon(
+							FOOTER_ICONS.workspace,
+							palette.paint("cache", truncateToWidth(workspace, 18, "…")),
+							"cache",
+						),
+						dropRank: RIBBON_DROP.workspace,
+						required: false,
+					});
+				}
+				const branch = state.branch ? sanitize(state.branch) : "";
+				if (branch) {
+					add({
+						id: "git",
+						zone: "left",
+						full: icon(
+							FOOTER_ICONS.git,
+							`${palette.paint("input", branch)}${state.dirty ? palette.paint("warning", "*") : ""}`,
+							"input",
+						),
+						compact: icon(
+							FOOTER_ICONS.git,
+							`${palette.paint("input", truncateToWidth(branch, 18, "…"))}${state.dirty ? palette.paint("warning", "*") : ""}`,
+							"input",
+						),
+						dropRank: RIBBON_DROP.git,
+						required: false,
+					});
+				}
+				continue;
+			}
+
+			if (segment === "context") {
+				const metrics = state.metrics;
+				const role = contextRole(metrics, config);
+				const rendered = icon(
+					FOOTER_ICONS.context,
+					paintValue(percentValue(metrics.contextPercent, 1), role, palette),
+					role,
+				);
+				add({
+					id: "context",
+					zone: "right",
+					full: `${rendered}${
+						Number.isFinite(metrics.contextWindow) && metrics.contextWindow > 0
+							? palette.paint("muted", ` / ${formatTokens(metrics.contextWindow)}`)
+							: ""
+					}${metrics.autoCompact === true ? ` ${palette.paint("muted", FOOTER_ICONS.autoCompact)}` : ""}`,
+					compact: rendered,
+					dropRank: RIBBON_DROP.context,
+					required: true,
+				});
+				continue;
+			}
+			continue;
+		}
+
+		// Telemetry surface: measured usage, cache, cost, and performance.
+		if (segment === "metrics") {
+			const metrics = state.metrics;
+			const input = availableValue(metrics.usageAvailable, metrics.input);
+			const output = availableValue(metrics.usageAvailable, metrics.output);
+			const cache = percentValue(metrics.cacheHitPercent, 0);
+			const cost = `${paintValue(costValue(metrics, config.currencyDecimals, true), "cost", palette)}${
+				metrics.subscription ? palette.paint("muted", " (sub)") : ""
+			}`;
+			add({
+				id: "input",
+				zone: "left",
+				full: icon(
+					FOOTER_ICONS.input,
+					paintValue(input, "input", palette),
+					input.available ? "input" : "dim",
+				),
+				compact: icon(FOOTER_ICONS.input, paintValue(input, "input", palette)),
+				dropRank: RIBBON_DROP.input,
+				required: false,
+			});
+			add({
+				id: "output",
+				zone: "left",
+				full: icon(
+					FOOTER_ICONS.output,
+					paintValue(output, "output", palette),
+					output.available ? "output" : "dim",
+				),
+				compact: icon(FOOTER_ICONS.output, paintValue(output, "output", palette)),
+				dropRank: RIBBON_DROP.output,
+				required: false,
+			});
+			add({
+				id: "cache",
+				zone: "left",
+				full: icon(
+					FOOTER_ICONS.cache,
+					paintValue(cache, "cache", palette),
+					cache.available ? "cache" : "dim",
+				),
+				compact: icon(FOOTER_ICONS.cache, paintValue(cache, "cache", palette)),
+				dropRank: RIBBON_DROP.cache,
+				required: false,
+			});
+			add({
+				id: "cost",
+				zone: "left",
+				full: cost,
+				compact: cost,
+				dropRank: RIBBON_DROP.cost,
+				required: false,
+			});
+			continue;
+		}
+
+		if (segment === "performance") {
+			const values = responsePerformanceValues(state.performance);
+			const rendered = [
+				icon(FOOTER_ICONS.performance, paintValue(values.ttft, "output", palette)),
+				icon(
+					FOOTER_ICONS.speed,
+					paintValue(values.tps, "output", palette) +
+						(values.tps.available ? palette.paint("muted", "/s") : ""),
+				),
+			].join("  ");
+			add({
+				id: "performance",
+				zone: "right",
+				full: rendered,
+				compact: rendered,
+				dropRank: RIBBON_DROP.performance,
+				required: false,
+			});
+			continue;
+		}
+
+		if (segment === "menu") {
+			const configuredShortcut = sanitize(config.shortcut);
+			const shortcut = configuredShortcut.toLowerCase() === "alt+a" ? "⌥A" : configuredShortcut.toUpperCase();
+			if (shortcut) {
+				add({
+					id: "menu",
+					zone: "right",
+					full: icon(FOOTER_ICONS.menu, palette.paint("menu", shortcut), "menu"),
+					compact: palette.paint("menu", shortcut),
+					dropRank: RIBBON_DROP.menu,
+					required: false,
+				});
+			}
+		}
+	}
+
+	return items;
+}
+
+function renderRibbonItems(
+	items: FooterItem[],
+	compactIds: Set<FooterItemId>,
+	palette: AtelierPalette,
+): string {
+	return items
+		.map((item, index) => {
+			const text = compactIds.has(item.id) ? item.compact : item.full;
+			const previous = items[index - 1];
+			if (!previous) return text;
+			if (RIBBON_ITEM_GROUP[previous.id] !== RIBBON_ITEM_GROUP[item.id]) {
+				return `${palette.paint("dim", ` ${FOOTER_ICONS.separator} `)}${text}`;
+			}
+			const group = RIBBON_ITEM_GROUP[item.id];
+			return `${group === "model" || group === "workspace" ? palette.paint("dim", " · ") : "  "}${text}`;
+		})
+		.join("");
+}
+
+/**
+ * Renders one ribbon surface. The header flows left-to-right inside the
+ * composer's top rule and gives up entirely (returning "") when it cannot fit,
+ * letting the complete plain Status Rail render instead. The telemetry row is
+ * the compact measured-usage strip below the composer.
+ */
+export function renderFooterRibbonLine(
+	state: FooterState,
+	config: AtelierConfig,
+	theme: ThemeLike,
+	width: number,
+	colorEnabled: boolean,
+	workingDots: string,
+	surface: FooterSurface,
+): string {
+	if (width <= 0) return "";
+	const palette = createPalette(theme, colorEnabled);
+	let items = buildRibbonItems(state, config, theme, colorEnabled, workingDots, surface);
+	if (surface === "telemetry") {
+		const metrics = state.metrics;
+		const available: Partial<Record<FooterItemId, boolean>> = {
+			input: metrics.usageAvailable && Number.isFinite(metrics.input),
+			output: metrics.usageAvailable && Number.isFinite(metrics.output),
+			cache: Number.isFinite(metrics.cacheHitPercent),
+			cost: metrics.costAvailable && Number.isFinite(metrics.cost),
+			performance: responsePerformanceValues(state.performance).ttft.available,
+		};
+		items = items.filter((item) => available[item.id] !== false);
+	}
+
+	const active = [...items];
+	const compactIds = new Set<FooterItemId>();
+	const renderRow = (): string => {
+		const leftText = renderRibbonItems(
+			active.filter((item) => item.zone === "left"),
+			compactIds,
+			palette,
+		);
+		const rightText = renderRibbonItems(
+			active.filter((item) => item.zone === "right"),
+			compactIds,
+			palette,
+		);
+		return [leftText, rightText].filter(Boolean).join(palette.paint("dim", ` ${FOOTER_ICONS.separator} `));
+	};
+	const measured = () => visibleWidth(renderRow()) + (surface === "header" ? 2 : 0);
+
+	const droppable = active.filter((item) => !item.required).sort((a, b) => a.dropRank - b.dropRank);
+	for (const item of droppable) {
+		if (measured() <= width) break;
+		const index = active.findIndex((candidate) => candidate.id === item.id);
+		if (index >= 0) active.splice(index, 1);
+	}
+	// Required content that still overflows: compact it, then give up the header.
+	for (const item of active.filter((candidate) => candidate.required)) {
+		if (measured() <= width) break;
+		if (item.full !== item.compact) compactIds.add(item.id);
+	}
+	if (surface === "header" && measured() > width) return "";
+
+	const row = renderRow();
+	if (surface === "telemetry" && active.length > 0 && active.every((item) => item.zone === "right")) {
+		return `${" ".repeat(Math.max(0, width - visibleWidth(row)))}${row}`;
+	}
+	return truncateToWidth(row, width, "");
+}
+
 export interface FooterComponentOptions {
 	getState(): FooterState;
 	getConfig(): AtelierConfig;
@@ -397,7 +780,15 @@ export interface FooterComponentOptions {
 	theme: ThemeLike;
 }
 
-export function createFooterComponent(options: FooterComponentOptions): Component & { dispose(): void } {
+export interface AtelierFooterComponent extends Component {
+	/** Prompt-style header strip for the composer's top rule (ribbon mode). */
+	renderHeader(width: number): string;
+	/** Compact measured-telemetry row (ribbon mode); empty when nothing is measurable. */
+	renderTelemetry(width: number): string[];
+	dispose(): void;
+}
+
+export function createFooterComponent(options: FooterComponentOptions): AtelierFooterComponent {
 	let disposed = false;
 	let frameIndex = 0;
 	let animationTimer: ReturnType<typeof setInterval> | undefined;
@@ -424,6 +815,30 @@ export function createFooterComponent(options: FooterComponentOptions): Componen
 		}, WORKING_ANIMATION_INTERVAL_MS);
 	};
 
+	const renderSurface = (width: number, surface: FooterSurface): string => {
+		const state = options.getState();
+		const config = options.getConfig();
+		const colorEnabled = options.colorEnabled ?? true;
+		const workingDots = WORKING_DOT_FRAMES[frameIndex] ?? WORKING_DOT_FRAMES[0];
+		const line = renderFooterRibbonLine(
+			state,
+			config,
+			options.theme,
+			width,
+			colorEnabled,
+			workingDots,
+			surface,
+		);
+		const fullActivity = activityText(
+			state,
+			createPalette(options.theme, colorEnabled),
+			options.theme,
+			workingDots,
+			false,
+		);
+		if (surface !== "telemetry") syncAnimation(state.activity === "working" && line.includes(fullActivity));
+		return line;
+	};
 	return {
 		render(width) {
 			const state = options.getState();
@@ -440,6 +855,13 @@ export function createFooterComponent(options: FooterComponentOptions): Componen
 			);
 			syncAnimation(state.activity === "working" && line.includes(fullActivity));
 			return [line];
+		},
+		renderHeader(width: number) {
+			return renderSurface(width, "header");
+		},
+		renderTelemetry(width: number) {
+			const line = renderSurface(Math.max(0, width - 4), "telemetry");
+			return line ? [`  ${line}  `] : [];
 		},
 		invalidate() {},
 		dispose() {

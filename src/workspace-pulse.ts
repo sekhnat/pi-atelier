@@ -34,22 +34,27 @@ interface ExecResult {
 type WorkspacePulseExec = (
 	command: string,
 	args: string[],
-	options?: { cwd?: string; timeout?: number },
+	options?: { cwd?: string; timeout?: number; signal?: AbortSignal },
 ) => Promise<ExecResult>;
 
 export interface InspectWorkspacePulseOptions {
 	exec: WorkspacePulseExec;
 	cwd: string;
+	/** Cancellation signal for the owning refresh lifetime; aborted inspections return unavailable. */
+	signal?: AbortSignal;
 }
 
 export interface WorkspacePulseRefresh {
 	request(): void;
 	flush(): Promise<void>;
+	/** Suspends or resumes all scheduled work; disabling aborts the current inspection lifetime. */
+	setEnabled(enabled: boolean): void;
 	dispose(): void;
 }
 
 export interface WorkspacePulseRefreshOptions {
-	inspect(): Promise<WorkspacePulseInspection>;
+	/** Runs one inspection; honor cancellation through the provided lifetime signal. */
+	inspect(signal: AbortSignal): Promise<WorkspacePulseInspection>;
 	publish(inspection: WorkspacePulseInspection): void;
 	delayMs?: number;
 }
@@ -58,51 +63,58 @@ export interface WorkspacePulseRefreshOptions {
 export function createWorkspacePulseRefresh(options: WorkspacePulseRefreshOptions): WorkspacePulseRefresh {
 	const delayMs = Math.max(0, Math.trunc(options.delayMs ?? 250));
 	let disposed = false;
+	let enabled = true;
 	let requestedVersion = 0;
 	let completedVersion = 0;
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let inFlight: Promise<void> | undefined;
+	/** One controller per enabled lifetime; disabling aborts it so late results cannot publish. */
+	let lifetime = new AbortController();
+	const flushWaiters = new Set<() => void>();
 
 	const clearTimer = (): void => {
 		if (timer) clearTimeout(timer);
 		timer = undefined;
 	};
 
+	const releaseFlushWaiters = (): void => {
+		for (const release of flushWaiters) release();
+		flushWaiters.clear();
+	};
+
 	const runInspection = (): Promise<void> => {
 		const version = requestedVersion;
+		const signal = lifetime.signal;
 		const running = (async () => {
 			let inspection: WorkspacePulseInspection;
 			try {
-				inspection = await options.inspect();
+				inspection = await options.inspect(signal);
 			} catch {
 				inspection = { kind: "unavailable" };
 			}
-			if (disposed) return;
+			if (disposed || signal.aborted) return;
 			completedVersion = Math.max(completedVersion, version);
 			options.publish(inspection);
 		})();
 		inFlight = running;
-		void running.then(
-			() => {
-				if (inFlight === running) inFlight = undefined;
-			},
-			() => {
-				if (inFlight === running) inFlight = undefined;
-			},
-		);
+		const settled = (): void => {
+			if (inFlight === running) inFlight = undefined;
+			releaseFlushWaiters();
+		};
+		void running.then(settled, settled);
 		return running;
 	};
 
 	const runScheduled = async (version: number): Promise<void> => {
-		if (disposed || version !== requestedVersion) return;
+		if (disposed || !enabled || version !== requestedVersion) return;
 		if (inFlight) await inFlight;
-		if (disposed || version !== requestedVersion || completedVersion >= version) return;
+		if (disposed || !enabled || version !== requestedVersion || completedVersion >= version) return;
 		await runInspection();
 	};
 
 	return {
 		request() {
-			if (disposed) return;
+			if (disposed || !enabled) return;
 			const version = ++requestedVersion;
 			clearTimer();
 			timer = setTimeout(() => {
@@ -112,19 +124,35 @@ export function createWorkspacePulseRefresh(options: WorkspacePulseRefreshOption
 			timer.unref?.();
 		},
 		async flush() {
-			if (disposed) return;
+			if (disposed || !enabled) return;
 			const targetVersion = ++requestedVersion;
 			clearTimer();
-			while (!disposed && completedVersion < targetVersion) {
-				if (inFlight) await inFlight;
-				else await runInspection();
+			while (!disposed && enabled && completedVersion < targetVersion) {
+				if (!inFlight) runInspection();
+				await new Promise<void>((release) => flushWaiters.add(release));
 			}
+		},
+		setEnabled(next: boolean) {
+			if (disposed || next === enabled) return;
+			if (next) {
+				enabled = true;
+				lifetime = new AbortController();
+				return;
+			}
+			enabled = false;
+			requestedVersion += 1;
+			clearTimer();
+			lifetime.abort();
+			releaseFlushWaiters();
 		},
 		dispose() {
 			if (disposed) return;
 			disposed = true;
+			enabled = false;
 			requestedVersion += 1;
 			clearTimer();
+			lifetime.abort();
+			releaseFlushWaiters();
 		},
 	};
 }
@@ -250,10 +278,19 @@ function parseNumstat(
 async function inspectWorkspacePulseUnchecked(
 	options: InspectWorkspacePulseOptions,
 ): Promise<WorkspacePulseInspection> {
-	const discovery = await options.exec("git", ["rev-parse", "--is-inside-work-tree", "--show-toplevel"], {
-		cwd: options.cwd,
-		timeout: 2_000,
-	});
+	const signal = options.signal;
+	const execOptions = (
+		base: { timeout?: number; cwd?: string } = {},
+	): { timeout?: number; cwd?: string; signal?: AbortSignal } => (signal ? { ...base, signal } : base);
+	if (signal?.aborted) return { kind: "unavailable" };
+	const discovery = await options.exec(
+		"git",
+		["rev-parse", "--is-inside-work-tree", "--show-toplevel"],
+		execOptions({
+			cwd: options.cwd,
+			timeout: 2_000,
+		}),
+	);
 	if (discovery.code !== 0 || discovery.killed) {
 		const explicitNotRepo = /not a git repository/i.test(`${discovery.stderr}\n${discovery.stdout}`);
 		return !discovery.killed && (explicitNotRepo || (discovery.code === 128 && !hasGitMarker(options.cwd)))
@@ -263,36 +300,52 @@ async function inspectWorkspacePulseUnchecked(
 	const discovered = discoveryOutput(discovery.stdout);
 	const root = discovered.root;
 	if (!discovered.inside || !root) return { kind: "unavailable" };
+	if (signal?.aborted) return { kind: "unavailable" };
 
 	const status = await options.exec(
 		"git",
 		["-C", root, "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"],
-		{ timeout: 2_000 },
+		execOptions({ timeout: 2_000 }),
 	);
 	if (status.code !== 0 || status.killed) return { kind: "unavailable" };
 
 	const parsedStatus = parseStatus(status.stdout);
 	if (!parsedStatus.valid) return { kind: "unavailable" };
-	const head = await options.exec("git", ["-C", root, "rev-parse", "--verify", "HEAD^{tree}"], {
-		timeout: 2_000,
-	});
-	if (head.killed) return { kind: "unavailable" };
-	const baseline =
-		head.code === 0
-			? head.stdout.trim()
-			: parsedStatus.unborn
-				? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-				: "";
-	if (!baseline) return { kind: "unavailable" };
+	if (signal?.aborted) return { kind: "unavailable" };
 
-	const diff = await options.exec(
-		"git",
-		["-C", root, "diff", "--numstat", "-z", "--find-renames", baseline, "--"],
-		{ timeout: 2_000 },
-	);
-	if (diff.code !== 0 || diff.killed) return { kind: "unavailable" };
+	// Fast path: no tracked change means no baseline or diff work is needed.
+	// Conflicts and changed submodules already contribute tracked records, so zero
+	// tracked files implies an empty diff regardless of untracked content or an
+	// unborn HEAD.
+	const numstat: Pick<WorkspacePulseSnapshot, "linesAdded" | "linesRemoved" | "binaryFiles"> = {
+		linesAdded: 0,
+		linesRemoved: 0,
+		binaryFiles: 0,
+	};
+	if (parsedStatus.trackedFiles > 0) {
+		const head = await options.exec(
+			"git",
+			["-C", root, "rev-parse", "--verify", "HEAD^{tree}"],
+			execOptions({ timeout: 2_000 }),
+		);
+		if (head.killed) return { kind: "unavailable" };
+		const baseline =
+			head.code === 0
+				? head.stdout.trim()
+				: parsedStatus.unborn
+					? "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+					: "";
+		if (!baseline) return { kind: "unavailable" };
 
-	const numstat = parseNumstat(diff.stdout, parsedStatus.submodulePaths);
+		const diff = await options.exec(
+			"git",
+			["-C", root, "diff", "--numstat", "-z", "--find-renames", baseline, "--"],
+			execOptions({ timeout: 2_000 }),
+		);
+		if (diff.code !== 0 || diff.killed) return { kind: "unavailable" };
+
+		Object.assign(numstat, parseNumstat(diff.stdout, parsedStatus.submodulePaths));
+	}
 	return {
 		kind: "available",
 		root,

@@ -14,6 +14,7 @@ A responsive status rail and activity sidebar for [Pi](https://pi.dev).
 - Configurable display presets, segments, and sidebar panels
 - Session details, rename, and compaction actions
 - Completion notifications on macOS and Windows
+- Opt-in session ribbon for the composer with Nerd Font prompt icons and compact telemetry (off by default)
 - No telemetry or external network requests
 
 ## Requirements
@@ -21,6 +22,9 @@ A responsive status rail and activity sidebar for [Pi](https://pi.dev).
 - Pi 0.84.0 or newer
 - Node.js 22.19.0 or newer
 - Interactive TUI mode
+
+
+Optional: a [Nerd Font](https://www.nerdfonts.com) selected in your terminal, only if you enable the session ribbon (see [Session ribbon](#session-ribbon)).
 
 ## Install
 
@@ -58,9 +62,13 @@ Commands:
 /atelier enable|disable     # set extension state
 ```
 
+
+`/atelier disable` hides Atelier's UI and suspends its background work: sidebar and footer renders, usage-history scans, TODO reconstruction, streaming token estimates, Workspace Pulse Git inspection, and completion notifications. Pending workspace work is cancelled and nothing disabled-period is published. `/atelier enable` reconciles once from current session state; the sidebar stays hidden until you show it again.
+
 The sidebar starts visible and hides when the terminal is too narrow. Press `Ctrl+Shift+R` to resize it.
 
-In Pi fullscreen TUI mode, the sidebar is rendered as a separate split-layout child so transcript selection and copy stay scoped to Pi output. Regular TUI mode remains terminal-native, so a rectangular terminal selection can still include sidebar text.
+In Pi fullscreen TUI mode, the sidebar is rendered as a separate split-layout child so transcript selection and copy stay scoped to Pi output; when a mouse selection starts outside the transcript — in the editor or the sidebar — the highlighted and copied range stops at the main-pane boundary. Capturing overlays keep Pi's native selection behavior. Regular TUI mode remains terminal-native, so a rectangular terminal selection can still include sidebar text.
+
 
 The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
 
@@ -80,6 +88,19 @@ The composer uses a rounded frame with inner padding. Thinking-level and bash-mo
 
 Pi supports one custom footer and one custom editor at a time. Extension load order determines which chrome is visible.
 
+## Session ribbon
+
+The session ribbon is an optional replacement for the composer's status presentation, disabled by default. When enabled through **Settings** or user configuration, the composer's top border holds activity, model/thinking, workspace and Git (controlled by the Git segment), and context percentage/capacity in one continuous strip with Nerd Font prompt icons, and a quieter row below shows measured token usage, cache, cost, and response timing. Display presets, visibility, and ordering still apply within each row.
+
+The complete plain Status Rail renders instead whenever the ribbon cannot: the composer editor is unavailable or replaced by a Pi selector, the terminal is below 12 rows, the editor is too narrow, or the editor installation fails. Turning the preference off restores the plain rail on the next render.
+
+### Terminal font
+
+The session ribbon's icons require a [Nerd Font](https://www.nerdfonts.com/font-downloads) selected in your terminal — for example JetBrainsMono Nerd Font Mono or FiraCode Nerd Font Mono. Install the font, then select it in your terminal's font settings; installing it alone does not select it.
+
+Atelier does not bundle or install fonts or change terminal settings. There is no plain-text icon fallback; unsupported glyphs may appear as boxes or missing symbols. The default configuration never requires a Nerd Font.
+
+
 ## Configuration
 
 User configuration:
@@ -94,7 +115,7 @@ Trusted project configuration:
 <project>/.pi/pi-atelier.json
 ```
 
-Project settings override user settings. Session changes override both. Global sidebar and notification preferences remain user-only.
+Project settings override user settings. Session changes override both. Global sidebar and notification preferences remain user-only, as does the session ribbon: project and session values are validated but never enable or disable it.
 
 ```json
 {
@@ -105,11 +126,12 @@ Project settings override user settings. Session changes override both. Global s
   "contextDanger": 90,
   "showSidebarOnStartup": true,
   "showSidebarToolNames": false,
-  "completionNotifications": true
+  "completionNotifications": true,
+  "showSessionRibbon": false
 }
 ```
 
-Use **Settings → Display** to reorder or hide status rail segments and sidebar panels.
+Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Undo restores the latest Display or Sidebar edit, including a Display Revert.
 
 ## Privacy
 

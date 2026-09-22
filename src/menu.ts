@@ -1,7 +1,7 @@
 import {
-	getSettingsListTheme,
 	type ExtensionAPI,
 	type ExtensionContext,
+	getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -15,13 +15,6 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { saveUserConfigPatch } from "./config.js";
-import {
-	DISPLAY_SETTINGS_OVERLAY_MARGIN,
-	DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
-	createSettingsWorkspace,
-	getDisplaySettingsViewportHeight,
-	type SidebarPanelSetting,
-} from "./settings-workspace.js";
 import { applyDisplayTemplate, reorderSegment, toggleSegmentVisibility } from "./display.js";
 import {
 	createLifecycleOverlayComponent,
@@ -30,6 +23,13 @@ import {
 	type OverlaySettlement,
 	type RetirableLifecycleOverlayComponent,
 } from "./overlay-lifecycle.js";
+import {
+	createSettingsWorkspace,
+	DISPLAY_SETTINGS_OVERLAY_MARGIN,
+	DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
+	getDisplaySettingsViewportHeight,
+	type SidebarPanelSetting,
+} from "./settings-workspace.js";
 import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig, Ornament, SegmentId, TemplateName } from "./types.js";
 
@@ -41,7 +41,10 @@ export interface DisplaySettingsWorkspaceOptions {
 }
 
 export interface ControlCenterOptions extends DisplaySettingsWorkspaceOptions {}
-export interface MenuActionsOptions extends DisplaySettingsWorkspaceOptions {}
+export interface MenuActionsOptions extends DisplaySettingsWorkspaceOptions {
+	/** Live render hook for preference changes that reshape the composer frame. */
+	requestLiveRender?: () => void;
+}
 
 function isOverlayLifetimeActive(lifetime: OverlayLifetime | undefined): boolean {
 	return lifetime?.isActive() ?? true;
@@ -240,6 +243,29 @@ export function createMenuActions(
 				if (!isActive()) return;
 				notify(
 					`Completion notifications changed for this session but could not be saved: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+					"warning",
+				);
+			}
+		},
+		async setShowSessionRibbon(enabled: boolean): Promise<void> {
+			if (!isActive()) return;
+			const previous = runtime.getConfig();
+			runtime.setConfig({ ...previous, showSessionRibbon: enabled });
+			// The composer frame adopts the ribbon immediately; request a live render so
+			// the enabled (or rolled-back) preference is visible without restarting.
+			options.requestLiveRender?.();
+			try {
+				await savePatch(userConfigPath, { showSessionRibbon: enabled });
+				if (!isActive()) return;
+				notify(`Session ribbon ${enabled ? "enabled" : "disabled"}`, "info");
+			} catch (error) {
+				if (!isActive()) return;
+				runtime.setConfig(previous);
+				options.requestLiveRender?.();
+				notify(
+					`Session ribbon preference could not be saved: ${
 						error instanceof Error ? error.message : String(error)
 					}`,
 					"warning",
@@ -622,14 +648,10 @@ export async function openAtelierControlCenter(
 		return;
 	}
 	if (!isOverlayLifetimeActive(lifetime)) return;
-	const actions = createMenuActions(
-		pi,
-		ctx,
-		runtime,
-		userConfigPath,
-		savePatch,
-		lifetime ? { lifetime } : {},
-	);
+	const actions = createMenuActions(pi, ctx, runtime, userConfigPath, savePatch, {
+		...(lifetime ? { lifetime } : {}),
+		requestLiveRender: requestAllRenders,
+	});
 	for (;;) {
 		if (!isOverlayLifetimeActive(lifetime)) return;
 		const category = await showSelection(
@@ -664,6 +686,11 @@ export async function openAtelierControlCenter(
 							value: "sidebar-startup",
 							label: `Sidebar on startup: ${runtime.getConfig().showSidebarOnStartup ? "On" : "Off"}`,
 							description: "Global user preference",
+						},
+						{
+							value: "session-ribbon",
+							label: `Session ribbon: ${runtime.getConfig().showSessionRibbon ? "On" : "Off"}`,
+							description: "Nerd Font composer status; user preference",
 						},
 						{
 							value: "notifications",
@@ -713,6 +740,8 @@ export async function openAtelierControlCenter(
 					await actions.setShowSidebarOnStartup(!runtime.getConfig().showSidebarOnStartup);
 				else if (choice === "notifications")
 					await actions.setCompletionNotifications(!runtime.getConfig().completionNotifications);
+				else if (choice === "session-ribbon")
+					await actions.setShowSessionRibbon(!runtime.getConfig().showSessionRibbon);
 				else await sidebar.toggleToolList();
 			}
 		} else if (category === "controls") {

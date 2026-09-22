@@ -308,6 +308,65 @@ describe("run activity tracker transitions", () => {
 		expect(() => (first.activeTools as unknown as { pop(): unknown }).pop()).toThrow();
 		expect(tracker.getSnapshot().activeTools).toHaveLength(1);
 	});
+
+	it("resetResponse discards partial response timing without touching run or tool state", () => {
+		const onChange = vi.fn();
+		const tracker = createRunActivityTracker({ cwd: "/repo", onChange });
+		tracker.startRun(1_000);
+		tracker.startTurn(2);
+		tracker.startTool(
+			{ type: "tool_execution_start", toolCallId: "read-1", toolName: "read", args: { path: "/repo/a.ts" } },
+			2_000,
+		);
+		tracker.startResponse(3_000);
+		tracker.updateResponseEstimate(1, 3_800);
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 800 });
+		onChange.mockClear();
+
+		tracker.resetResponse();
+
+		expect(tracker.getSnapshot()).not.toHaveProperty("performance");
+		expect(tracker.getSnapshot()).toMatchObject({
+			phase: "running",
+			turnNumber: 3,
+			startedAt: 1_000,
+			activeTools: [{ id: "read-1", name: "read", summary: "a.ts" }],
+		});
+		expect(onChange).toHaveBeenCalledTimes(1);
+
+		tracker.finishTool(
+			{ type: "tool_execution_end", toolCallId: "read-1", toolName: "read", result: {}, isError: false },
+			4_000,
+		);
+		tracker.finishResponse(120, 5_000);
+		expect(tracker.getSnapshot()).toMatchObject({ completedCount: 1 });
+		expect(tracker.getSnapshot()).not.toHaveProperty("performance");
+	});
+
+	it("resetResponse lets the next fully observed response measure normally", () => {
+		const tracker = createRunActivityTracker({ cwd: "/repo" });
+		tracker.startResponse(1_000);
+		tracker.updateResponseEstimate(1, 1_500);
+		tracker.resetResponse();
+
+		tracker.startResponse(6_000);
+		tracker.updateResponseEstimate(1, 6_500);
+		tracker.finishResponse(50, 7_500);
+
+		expect(tracker.getSnapshot().performance).toEqual({ ttftMs: 500, tokensPerSecond: 50 });
+	});
+
+	it("resetResponse is a no-op without response timing", () => {
+		const onChange = vi.fn();
+		const tracker = createRunActivityTracker({ cwd: "/repo", onChange });
+		tracker.startRun(1_000);
+		onChange.mockClear();
+
+		tracker.resetResponse();
+		tracker.resetResponse();
+
+		expect(onChange).not.toHaveBeenCalled();
+	});
 });
 
 describe("formatDuration", () => {

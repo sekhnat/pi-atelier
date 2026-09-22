@@ -52,6 +52,8 @@ export interface RunActivityTracker {
 	startTool(event: ToolExecutionStartEvent, now?: number): void;
 	finishTool(event: ToolExecutionEndEvent, now?: number): void;
 	settle(now?: number): void;
+	/** Discards partial response timing without touching run, turn, or tool bookkeeping. */
+	resetResponse(): void;
 	reset(): void;
 	isRunning(): boolean;
 	getSnapshot(): RunActivitySnapshot;
@@ -299,6 +301,19 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.notify();
 	}
 
+	resetResponse(): void {
+		if (
+			this.requestStartedAt === undefined &&
+			this.firstTokenAt === undefined &&
+			this.performance === undefined
+		) {
+			return;
+		}
+		this.requestStartedAt = undefined;
+		this.firstTokenAt = undefined;
+		this.performance = undefined;
+		this.notify();
+	}
 	reset(): void {
 		if (this.isEmpty()) return;
 

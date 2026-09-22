@@ -422,3 +422,118 @@ describe("Display Settings Workspace", () => {
 		expect(wide.some((line) => (line.match(/└/g) ?? []).length === 2)).toBe(true);
 	});
 });
+
+describe("single-step Undo across Display and Sidebar", () => {
+	const firstSidebarRow = (h: ReturnType<typeof harness>) => {
+		for (let index = 0; index < 14; index += 1) h.component.handleInput("\u001b[B");
+	};
+
+	it("undo restores only the Sidebar draft when it follows a Display edit", () => {
+		const h = harness();
+		h.component.handleInput(" "); // Display edit records the display target
+		firstSidebarRow(h);
+		h.component.handleInput(" "); // Sidebar edit overwrites the single record
+		expect(text(h.component)).toContain("○ Agent");
+
+		h.component.handleInput("u");
+		expect(text(h.component)).toContain("Undid the last Sidebar change");
+		expect(text(h.component)).toContain("● Agent");
+		// The older Display mutation must not fall through: the session override stays.
+		expect(h.layers.session).toBeDefined();
+
+		h.component.handleInput("u");
+		expect(text(h.component)).toContain("Nothing to undo");
+		expect(h.layers.session).toBeDefined();
+	});
+
+	it("undo restores only the Display override when it follows a Sidebar edit", () => {
+		const h = harness();
+		firstSidebarRow(h);
+		h.component.handleInput(" "); // Sidebar draft edit
+		for (let index = 0; index < 14; index += 1) h.component.handleInput("\u001b[A");
+		h.component.handleInput(" "); // Display edit overwrites the single record
+
+		h.component.handleInput("u");
+		expect(text(h.component)).toContain("Undid the last Display change");
+		expect(h.layers.session).toBeUndefined();
+		// The older Sidebar draft mutation is not restored.
+		expect(text(h.component)).toContain("○ Agent");
+	});
+
+	it("Display Revert after a Sidebar edit records a Display undo target", () => {
+		const h = harness();
+		firstSidebarRow(h);
+		h.component.handleInput(" ");
+		h.component.handleInput("r");
+		h.component.handleInput("u");
+		expect(text(h.component)).toContain("Undid the last Display change");
+		expect(h.layers.session).toBeUndefined();
+		// The Sidebar draft edit is not resurrected by the Revert undo.
+		expect(text(h.component)).toContain("○ Agent");
+	});
+
+	it("a successful Sidebar save clears a Sidebar record but preserves a Display record", async () => {
+		const sidebarOnly = harness();
+		firstSidebarRow(sidebarOnly);
+		sidebarOnly.component.handleInput(" ");
+		sidebarOnly.component.handleInput("s");
+		await vi.waitFor(() => expect(text(sidebarOnly.component)).toContain("Saved as User default"));
+		sidebarOnly.component.handleInput("u");
+		expect(text(sidebarOnly.component)).toContain("Nothing to undo");
+
+		const both = harness();
+		firstSidebarRow(both);
+		both.component.handleInput(" "); // Sidebar draft edit
+		for (let index = 0; index < 14; index += 1) both.component.handleInput("\u001b[A");
+		both.component.handleInput(" "); // Display edit owns the record
+		both.component.handleInput("s"); // Saves the sidebar draft too
+		await vi.waitFor(() => expect(text(both.component)).toContain("Saved as User default"));
+		both.component.handleInput("u");
+		expect(text(both.component)).toContain("Undid the last Display change");
+		expect(both.layers.session).toBeUndefined();
+	});
+
+	it("a failed save preserves the pending undo target", async () => {
+		const h = harness();
+		firstSidebarRow(h);
+		h.component.handleInput(" ");
+		h.persist.mockRejectedValueOnce(new Error("disk full"));
+		h.component.handleInput("s");
+		await vi.waitFor(() => expect(text(h.component)).toContain("Save failed: disk full"));
+		h.component.handleInput("u");
+		expect(text(h.component)).toContain("Undid the last Sidebar change");
+		expect(text(h.component)).toContain("● Agent");
+	});
+
+	it("undo preserves discovered and unavailable panel entries while restoring the draft", () => {
+		const configuredLayout = [
+			{ id: "vendor:missing" as const, visible: true },
+			...DEFAULT_CONFIG.sidebarPanelLayout,
+		];
+		const renderConfig = { ...DEFAULT_CONFIG, sidebarPanelLayout: configuredLayout };
+		let discovered = false;
+		const h = harness({}, renderConfig, () => [
+			...configuredLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id,
+				available: entry.id !== "vendor:missing",
+				visible: entry.visible,
+			})),
+			...(discovered
+				? [{ id: "vendor:queue" as const, title: "Queue", available: true, visible: false }]
+				: []),
+		]);
+		discovered = true;
+		expect(text(h.component)).toContain("Queue");
+
+		// vendor:missing is the first draft row; walk one further to the agent panel.
+		for (let index = 0; index < 15; index += 1) h.component.handleInput("\u001b[B");
+		h.component.handleInput(" "); // Hide the agent panel in the draft
+		h.component.handleInput("u");
+		expect(text(h.component)).toContain("Undid the last Sidebar change");
+		expect(text(h.component)).toContain("● agent");
+		// Panel identity, effective default visibility, and unavailable entries survive.
+		expect(text(h.component)).toContain("Queue");
+		expect(text(h.component)).toContain("vendor:missing  unavailable");
+	});
+});

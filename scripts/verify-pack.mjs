@@ -16,6 +16,7 @@ const required = [
 	"src/state.ts",
 	"src/menu.ts",
 	"src/settings-workspace.ts",
+	"src/image-compositor.ts",
 	"src/palette.ts",
 	"src/run-activity.ts",
 	"src/sidebar-panels.ts",

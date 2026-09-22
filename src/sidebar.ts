@@ -842,15 +842,35 @@ function activitySidebarGroups(
 	].filter((group) => group.rows.length > 0);
 }
 
-function composeGroups(
-	groups: SidebarGroup[],
-	height: number,
-	width: number,
-	palette: AtelierPalette,
-	theme: ThemeLike,
-): SidebarGroup[] {
+// Counts rendered rows without painting: each contiguous panel run adds its
+// content rows plus three chrome rows (header, bottom border, spacer), mirroring
+// panelRows/renderGroups. Re-measure after every drop since removing a group can
+// join two groups from the same panel into one run.
+function measureGroups(groups: readonly SidebarGroup[]): number {
+	let total = 0;
+	for (let index = 0; index < groups.length; ) {
+		const group = groups[index];
+		if (!group) break;
+		if (!group.panel) {
+			total += group.rows.length;
+			index += 1;
+			continue;
+		}
+		let rowCount = 0;
+		let next = index;
+		while (groups[next]?.panel === group.panel && groups[next]?.panelId === group.panelId) {
+			rowCount += groups[next]?.rows.length ?? 0;
+			next += 1;
+		}
+		if (rowCount > 0) total += rowCount + 3;
+		index = next;
+	}
+	return total;
+}
+
+function composeGroups(groups: SidebarGroup[], height: number): SidebarGroup[] {
 	let candidate = groups.filter((group) => group.rows.length > 0);
-	while (renderGroups(candidate, width, palette, theme).length > height) {
+	while (measureGroups(candidate) > height) {
 		let dropIndex = -1;
 		let dropRank = Number.POSITIVE_INFINITY;
 		for (const [index, group] of candidate.entries()) {
@@ -1077,12 +1097,7 @@ export function renderSidebarLines(
 		});
 	}
 	return renderDock(
-		renderGroups(
-			composeGroups(ordered, safeHeight, contentWidth, palette, theme),
-			contentWidth,
-			palette,
-			theme,
-		),
+		renderGroups(composeGroups(ordered, safeHeight), contentWidth, palette, theme),
 		safeWidth,
 		safeHeight,
 		palette,

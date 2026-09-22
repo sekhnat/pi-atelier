@@ -2855,3 +2855,74 @@ describe("sidebar elapsed rendering", () => {
 		expect(lateIndex).toBeGreaterThan(earlyIndex);
 	});
 });
+
+describe("sidebar height fitting", () => {
+	const crownTitle = (line: string) =>
+		stripAnsi(line)
+			.slice(2)
+			.match(/^╭─ [✦✧] ([A-Z0-9 ]+) ─*╮$/)?.[1];
+
+	it("paints only the final retained set when fitting drops optional groups", () => {
+		const bold = vi.fn((text: string) => text);
+		const ranked = withActivity(activeActivity());
+
+		const full = renderSidebarLines(ranked, DEFAULT_CONFIG, { ...theme, bold }, 44, 60, false, 20_000);
+		const fullTitles = full.map(crownTitle).filter(Boolean);
+
+		bold.mockClear();
+		// A short frame forces several optional groups to be dropped.
+		const fitted = renderSidebarLines(ranked, DEFAULT_CONFIG, { ...theme, bold }, 44, 14, false, 20_000);
+		const fittedTitles = fitted.map(crownTitle).filter(Boolean);
+
+		// Each painted panel header calls bold exactly once, in panel order, so the
+		// painted sequence must equal the crowns visible in the final frame: discarded
+		// candidate sets are measured, never painted.
+		expect(fullTitles.length).toBeGreaterThan(fittedTitles.length);
+		expect(
+			bold.mock.calls.map((call) => String(call[0])).filter((title) => /^[A-Z0-9 ]+$/.test(title)),
+		).toEqual(fittedTitles);
+	});
+
+	it("measures panel chrome so fitted frames never clip a retained panel", () => {
+		for (let height = 8; height <= 36; height += 1) {
+			const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, height, false, 0);
+			expect(lines).toHaveLength(height);
+			const rows = lines.map((line) => stripAnsi(line).trim());
+			let openPanels = 0;
+			for (const row of rows) {
+				if (row.startsWith("╭─")) openPanels += 1;
+				if (/^╰─+╯$/.test(row)) openPanels -= 1;
+			}
+			// At most the last panel may clip, and only when required content alone
+			// overflows the height so the bounded dock fills every row without padding.
+			expect(openPanels).toBeLessThanOrEqual(1);
+			if (openPanels === 1) {
+				expect(rows[rows.length - 1]).not.toBe("");
+			} else {
+				// A measurement that diverged from the painted chrome would overflow the
+				// dock and leave a retained panel header without its closing border.
+				expect(openPanels).toBe(0);
+			}
+			if (height >= 14) expect(openPanels).toBe(0);
+		}
+	});
+
+	it("shares one set of panel chrome across a panel's retained groups", () => {
+		const toolsSnapshot = buildSidebarSnapshot({
+			state: { ...state, extensionStatuses: [] },
+			cwd: "/tmp/project",
+			branchEntryCount: 6,
+			activeToolCount: 4,
+			availableToolCount: 7,
+			activeToolNames: ["write", "read", "edit", "bash"],
+			extensionStatuses: [],
+		});
+		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
+		const rows = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, 44, 34, false));
+		// The TOOLS count row and every retained tool-name row render under one
+		// shared crown rather than one header per group.
+		expect(rows.filter((row) => row === "TOOLS")).toHaveLength(1);
+		expect(rows).toContainEqual(expect.stringMatching(/^4 \/ 7 active\s+▾$/));
+		expect(rows).toContain("bash  edit");
+	});
+});

@@ -39,7 +39,7 @@ export interface RuntimeDependencies {
 	autoCompact: boolean | null;
 	random?: () => number;
 	requestRender(): void;
-	inspectWorkspace?(): Promise<WorkspacePulseInspection>;
+	inspectWorkspace?(signal: AbortSignal): Promise<WorkspacePulseInspection>;
 }
 
 export function createInertAtelierState(autoCompact: boolean | null = null): AtelierState {
@@ -63,6 +63,7 @@ export class AtelierRuntime {
 	#displayLayers: DisplayLayerState;
 	#displayProvenance: DisplayProvenance;
 	#disposed = false;
+	#enabled = true;
 	#lastWorkspaceData: WorkspacePulseData | undefined;
 	#state: AtelierState;
 
@@ -76,16 +77,17 @@ export class AtelierRuntime {
 		this.#autoCompact = dependencies.autoCompact;
 		this.#random = dependencies.random ?? Math.random;
 		this.#requestRender = dependencies.requestRender;
-		const inspectWorkspace = async (): Promise<WorkspacePulseInspection> => {
+		const inspectWorkspace = async (signal: AbortSignal): Promise<WorkspacePulseInspection> => {
 			if (!this.#canInspectWorkspace()) return { kind: "unavailable" };
 			return dependencies.inspectWorkspace
-				? dependencies.inspectWorkspace()
+				? dependencies.inspectWorkspace(signal)
 				: inspectWorkspacePulse({
 						exec: async (command, args, options) =>
 							this.#canInspectWorkspace()
 								? this.#pi.exec(command, args, options)
 								: { stdout: "", stderr: "", code: 1, killed: true },
 						cwd: this.#ctx.cwd,
+						signal,
 					});
 		};
 		this.#workspacePulseRefresh = createWorkspacePulseRefresh({
@@ -225,7 +227,7 @@ export class AtelierRuntime {
 	}
 
 	refreshUsage(): void {
-		if (this.#disposed) return;
+		if (this.#disposed || !this.#enabled) return;
 		const messages: UsageMessage[] = [];
 		for (const entry of this.#ctx.sessionManager.getEntries()) {
 			if (entry.type === "message" && entry.message.role === "assistant") {
@@ -249,10 +251,30 @@ export class AtelierRuntime {
 		this.#invalidate();
 	}
 
-	#canInspectWorkspace(): boolean {
-		return !this.#disposed && this.#ctx.isProjectTrusted();
+	/** Suspends or resumes producers; a disabled runtime keeps only its last workspace data for reconciliation. */
+	setEnabled(enabled: boolean): void {
+		if (this.#disposed || enabled === this.#enabled) return;
+		if (!enabled) {
+			this.#enabled = false;
+			this.#workspacePulseRefresh.setEnabled(false);
+			return;
+		}
+		this.#enabled = true;
+		this.#workspacePulseRefresh.setEnabled(true);
+		if (!this.#canInspectWorkspace()) return;
+		// Reconcile from retained data: expose it as stale until one fresh inspection completes.
+		this.#replaceState({
+			...this.#state,
+			dirty: (this.#lastWorkspaceData?.snapshot.trackedFiles ?? 0) > 0,
+			workspacePulse: this.#lastWorkspaceData
+				? { status: "stale", data: this.#lastWorkspaceData }
+				: { status: "inspecting" },
+		});
 	}
 
+	#canInspectWorkspace(): boolean {
+		return !this.#disposed && this.#enabled && this.#ctx.isProjectTrusted();
+	}
 	scheduleWorkspacePulseRefresh(): void {
 		if (this.#canInspectWorkspace()) this.#workspacePulseRefresh.request();
 	}
@@ -262,7 +284,7 @@ export class AtelierRuntime {
 	}
 
 	#applyWorkspacePulseInspection(inspection: WorkspacePulseInspection): void {
-		if (this.#disposed) return;
+		if (this.#disposed || !this.#enabled) return;
 		if (inspection.kind === "available") {
 			const { kind: _kind, ...data } = inspection;
 			this.#lastWorkspaceData = data;
@@ -317,6 +339,6 @@ export class AtelierRuntime {
 	}
 
 	#invalidate(): void {
-		if (!this.#disposed) this.#requestRender();
+		if (!this.#disposed && this.#enabled) this.#requestRender();
 	}
 }

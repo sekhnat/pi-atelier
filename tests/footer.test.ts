@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { DISPLAY_TEMPLATES, legacySegmentsToLayout } from "../src/display.js";
-import { createFooterComponent, renderFooterLine } from "../src/footer.js";
+import { createFooterComponent, renderFooterLine, renderFooterRibbonLine } from "../src/footer.js";
 import { type AtelierConfig, type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
 
 const plainTheme = {
@@ -849,6 +849,181 @@ describe("footer", () => {
 			component.dispose();
 		} finally {
 			component.dispose();
+			vi.useRealTimers();
+		}
+	});
+});
+
+const ribbonComponentConfig = withVisible([
+	"activity",
+	"model",
+	"git",
+	"context",
+	"metrics",
+	"performance",
+	"menu",
+]);
+
+describe("session ribbon surfaces", () => {
+	const ribbonConfig = ribbonComponentConfig;
+	const ribbonState = { ...state, workspaceLabel: "pi-atelier" };
+
+	it("renders a prompt-icon header with activity, model, workspace, git, and context", () => {
+		const header = stripAnsi(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 160, true, "...", "header"),
+		);
+
+		// Nerd Font glyphs survive sanitization and mark each ribbon segment.
+		expect(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 160, true, "...", "header"),
+		).toContain("\ueb08");
+		expect(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 160, true, "...", "header"),
+		).toContain("\uf418");
+		expect(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 160, true, "...", "header"),
+		).toContain("\uf2db");
+		expect(header).toContain("● READY");
+		expect(header).toContain("gpt-5.6-sol");
+		expect(header).toContain("pi-atelier");
+		expect(header).toContain("main*");
+		// Context keeps its measured percentage and auto-compact marker.
+		expect(header).toContain("27.0%");
+	});
+
+	it("respects effective segment visibility and order in the header", () => {
+		const hiddenGit = withVisible(["activity", "model", "context"]);
+		const header = renderFooterRibbonLine(ribbonState, hiddenGit, plainTheme, 160, true, "...", "header");
+
+		expect(header).not.toContain("\uf418");
+		expect(header).not.toContain("\uf07b"); // workspace glyph rides the git segment
+		const modelIndex = stripAnsi(header).indexOf("gpt-5.6-sol");
+		const contextIndex = stripAnsi(header).indexOf("27.0%");
+		expect(modelIndex).toBeGreaterThanOrEqual(0);
+		expect(contextIndex).toBeGreaterThan(modelIndex);
+	});
+
+	it("gives the header up instead of clipping required state", () => {
+		// Deeply narrow: required-only content overflows, so no partial header renders.
+		expect(renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 10, true, "...", "header")).toBe("");
+		// Mid-range: optional detail drops, required state remains.
+		const fitted = stripAnsi(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 44, true, "...", "header"),
+		);
+		expect(fitted).toContain("● READY");
+	});
+
+	it("renders the compact telemetry row with the session cache-hit mapping and cost", () => {
+		const telemetry = stripAnsi(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 120, true, "...", "telemetry"),
+		);
+
+		// Session rate 98.8 → 99%; the latest rate (91.2) stays exclusive to the plain rail.
+		expect(telemetry).toContain("99%");
+		expect(telemetry).not.toContain("91");
+		// The fork's compact currency formatting applies.
+		expect(telemetry).toContain("$5.04");
+		expect(telemetry).toContain("(sub)");
+		// Measured usage rows keep their icon vocabulary.
+		expect(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 120, true, "...", "telemetry"),
+		).toContain("\uf019");
+		expect(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 120, true, "...", "telemetry"),
+		).toContain("\uf093");
+		expect(
+			renderFooterRibbonLine(ribbonState, ribbonConfig, plainTheme, 120, true, "...", "telemetry"),
+		).toContain("\uf1c0");
+	});
+
+	it("gates telemetry rows on measured availability and right-aligns performance-only rows", () => {
+		// Omit the optional cache rate entirely (exactOptionalPropertyTypes).
+		const { cacheHitPercent: _omitted, ...unmeasuredMetrics } = ribbonState.metrics;
+		const unmeasured = {
+			...ribbonState,
+			metrics: { ...unmeasuredMetrics, usageAvailable: false, costAvailable: false },
+		};
+		const config = withVisible(["activity", "model", "context", "metrics", "performance", "menu"]);
+		const idle = renderFooterRibbonLine(unmeasured, config, plainTheme, 120, true, "...", "telemetry");
+		// Without measurements the telemetry row still shows the menu shortcut.
+		expect(stripAnsi(idle)).toContain("⌥A");
+		expect(idle).not.toContain("\uf019");
+
+		const measured = renderFooterRibbonLine(
+			{ ...unmeasured, performance: { ttftMs: 820, tokensPerSecond: 42.3, estimated: true } },
+			config,
+			plainTheme,
+			120,
+			true,
+			"...",
+			"telemetry",
+		);
+		// Performance is the only right-zone item, so the row is right-aligned.
+		expect(stripAnsi(measured)).toContain("820ms");
+		expect(measured.startsWith(" ")).toBe(true);
+	});
+
+	it("sanitizes hostile workspace and branch text through the shared sanitizer", () => {
+		const hostile = renderFooterRibbonLine(
+			{ ...ribbonState, workspaceLabel: "\u001b[31mEVIL\u0007dir", branch: "main\u001b]0;x" },
+			ribbonConfig,
+			plainTheme,
+			160,
+			true,
+			"...",
+			"header",
+		);
+
+		expect(hostile).not.toContain("\u001b");
+		// The shared sanitizer replaces control bytes with spaces and keeps visible text.
+		expect(stripAnsi(hostile)).toContain("EVIL dir");
+		expect(stripAnsi(hostile)).toContain("main");
+	});
+
+	it("keeps the plain Status Rail free of ribbon glyphs", () => {
+		const plain = renderFooterLine(ribbonState, ribbonConfig, plainTheme, 160);
+		for (const glyph of ["\ueb08", "\uf418", "\uf2db", "\uf019", "\ue0b1"]) {
+			expect(plain).not.toContain(glyph);
+		}
+		// The plain rail maps the session rate with its compact label and keeps the
+		// latest rate exclusive to the classic detail rendering.
+		expect(stripAnsi(plain)).toContain("cache 99%");
+		const classic = renderFooterLine(ribbonState, actualClassicPresetConfig, plainTheme, 160);
+		expect(stripAnsi(classic)).toContain("91.2%");
+	});
+});
+
+describe("footer component ribbon methods", () => {
+	it("exposes header and telemetry surfaces without touching the plain render", () => {
+		vi.useFakeTimers();
+		try {
+			const requestRender = vi.fn();
+			const component = createFooterComponent({
+				getState: () => ({ ...state, workspaceLabel: "pi-atelier" }),
+				getConfig: () => ribbonComponentConfig,
+				colorEnabled: false,
+				requestRender,
+				onBranchChange: () => () => undefined,
+				theme: plainTheme,
+			});
+
+			// The plain render stays the complete Status Rail in every mode.
+			expect(component.render(120).join("")).toBe(
+				renderFooterLine(state, ribbonComponentConfig, plainTheme, 120),
+			);
+			expect(component.render(120).join("")).not.toContain("\ueb08");
+
+			const header = component.renderHeader(120);
+			expect(header).toContain("\ueb08");
+			expect(header).toContain("pi-atelier");
+
+			const telemetry = component.renderTelemetry(120);
+			expect(telemetry).toHaveLength(1);
+			expect(stripAnsi(telemetry[0] ?? "")).toContain("99%");
+			expect(telemetry[0]).toContain("\uf1c0");
+
+			component.dispose();
+		} finally {
 			vi.useRealTimers();
 		}
 	});

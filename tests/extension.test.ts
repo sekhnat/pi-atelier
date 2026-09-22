@@ -1,17 +1,17 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import atelierExtension, {
-	SIDEBAR_PANEL_EVENT_CHANNEL,
 	type AtelierExtensionDependencies,
+	SIDEBAR_PANEL_EVENT_CHANNEL,
 } from "../extensions/index.js";
-import { AtelierEditor } from "../src/editor.js";
 import {
 	loadConfig as loadAtelierConfig,
 	type saveUserConfigPatch as persistConfigPatch,
 } from "../src/config.js";
+import { AtelierEditor } from "../src/editor.js";
 import { installElapsedClock, resetElapsedClock } from "../src/elapsed-clock.js";
 
 afterEach(() => {
@@ -249,6 +249,22 @@ const FOOTER_THEME = {
 	bold: (text: string) => text,
 	italic: (text: string) => text,
 };
+
+/** Mounts the public editor/footer factories in the order Pi uses them. */
+function mountComposer(h: ReturnType<typeof harness>) {
+	const tui = { requestRender: vi.fn(), terminal: { rows: 24, columns: 80 } };
+	const footer = h.setFooter.mock.calls.at(-1)?.[0](tui, FOOTER_THEME, {
+		getGitBranch: () => "main",
+		getExtensionStatuses: () => new Map(),
+		onBranchChange: () => () => undefined,
+	});
+	const editor: AtelierEditor = h.setEditorComponent.mock.calls.at(-1)?.[0](
+		tui,
+		{ borderColor: (text: string) => text, selectList: {} },
+		{ matches: () => false },
+	);
+	return { tui, footer, editor };
+}
 
 /** Builds a footer from a captured `setFooter` factory and renders it once, as Pi would. */
 function renderFooter(
@@ -1122,6 +1138,163 @@ describe("extension registration", () => {
 		expect(distinctUi.ui.setEditorComponent).not.toHaveBeenCalled();
 	});
 
+	// Disable during a response: partial timing is discarded and is not reported later.
+	it("disable discards partial response timing and the response never reports metrics", async () => {
+		vi.useFakeTimers();
+		const elapsedClock = { value: 1_000 };
+		installElapsedClock(() => elapsedClock.value);
+		try {
+			const h = harness();
+			await start(h);
+			await command(h, "sidebar on");
+			await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+
+			elapsedClock.value = 1_100;
+			await h.handlers.get("before_provider_request")?.(
+				{ type: "before_provider_request", payload: {} },
+				h.ctx,
+			);
+			elapsedClock.value = 1_920;
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "thinking", thinking: "token" }] },
+					assistantMessageEvent: { type: "thinking_delta", delta: "token" },
+				},
+				h.ctx,
+			);
+			expect(h.overlays[0]?.component.render(120).join("\n")).toContain("TTFT 820ms");
+
+			await command(h, "disable");
+			expect(h.overlays[0]?.closed).toBe(true);
+			await command(h, "enable");
+
+			// The sidebar stays hidden after enable; the response that spanned disable keeps no TTFT/TPS.
+			expect(h.setFooter).toHaveBeenLastCalledWith(expect.anything());
+
+			elapsedClock.value = 4_420;
+			await h.handlers.get("message_end")?.(
+				{ type: "message_end", message: { role: "assistant", usage: { output: 120 } } },
+				h.ctx,
+			);
+			await command(h, "sidebar on");
+			const sidebarText = h.overlays.at(-1)?.component.render(120).join("\n") ?? "";
+			expect(sidebarText).toContain("TTFT ~ · TPS ~");
+
+			// The next fully observed response measures normally.
+			elapsedClock.value = 5_000;
+			await h.handlers.get("before_provider_request")?.(
+				{ type: "before_provider_request", payload: {} },
+				h.ctx,
+			);
+			elapsedClock.value = 5_600;
+			await h.handlers.get("message_update")?.(
+				{
+					type: "message_update",
+					message: { role: "assistant", content: [{ type: "thinking", thinking: "token" }] },
+					assistantMessageEvent: { type: "thinking_delta", delta: "token" },
+				},
+				h.ctx,
+			);
+			expect(h.overlays.at(-1)?.component.render(120).join("\n")).toContain("TTFT 600ms");
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("disable suspends TODO reconstruction, estimates, notifications, and renders; enable reconciles", async () => {
+		const h = harness("tui", "linux");
+		h.ctx.isProjectTrusted.mockReturnValue(true);
+		await start(h);
+
+		await command(h, "disable");
+		const setFooterCallsAfterDisable = h.setFooter.mock.calls.length;
+
+		// TODO events skip reconstruction while disabled.
+		const todoResult = await h.handlers.get("tool_result")?.(
+			{
+				type: "tool_result",
+				toolName: "todo",
+				isError: false,
+				details: { todos: [{ id: 1, text: "late", done: false }] },
+			},
+			h.ctx,
+		);
+		expect(todoResult).toBeUndefined();
+
+		// Streaming estimates and response timing events are skipped while disabled.
+		await h.handlers.get("before_provider_request")?.(
+			{ type: "before_provider_request", payload: {} },
+			h.ctx,
+		);
+		await h.handlers.get("message_update")?.(
+			{
+				type: "message_update",
+				message: { role: "assistant", content: [{ type: "thinking", thinking: "token" }] },
+				assistantMessageEvent: { type: "thinking_delta", delta: "token" },
+			},
+			h.ctx,
+		);
+
+		// Tool bookkeeping continues, but the disabled-period tool arguments are not retained.
+		await h.handlers.get("tool_execution_start")?.(
+			{
+				type: "tool_execution_start",
+				toolCallId: "bash-1",
+				toolName: "bash",
+				args: { command: "echo secret-during-disable" },
+			},
+			h.ctx,
+		);
+		await h.handlers.get("tool_execution_end")?.(
+			{ type: "tool_execution_end", toolCallId: "bash-1", toolName: "bash", result: {}, isError: false },
+			h.ctx,
+		);
+		await h.handlers.get("agent_settled")?.({ type: "agent_settled" }, h.ctx);
+		expect(h.spawnNotificationProcess).not.toHaveBeenCalled();
+
+		// Enable reconciles from authoritative state and installs the footer exactly once.
+		await command(h, "enable");
+		expect(h.setFooter.mock.calls.length).toBe(setFooterCallsAfterDisable + 1);
+		expect(h.setFooter).toHaveBeenLastCalledWith(expect.anything());
+
+		// The sidebar stays hidden after enable; showing it reveals the reconciled activity state.
+		await command(h, "sidebar on");
+		const sidebar = h.overlays.at(-1)?.component;
+		const sidebarText = sidebar.render(120).join("\n");
+		expect(sidebarText).toContain("tools 1 done · 0 failed");
+		// No partial response metrics from the disabled-period events survived.
+		expect(sidebarText).toContain("TTFT ~ · TPS ~");
+		// Disabled-period tool arguments are not retained and TODOs were not reconstructed from events.
+		expect(sidebarText).not.toContain("secret-during-disable");
+		expect(sidebarText).not.toContain("late");
+	});
+
+	it("repeated disable and enable transitions do not duplicate work", async () => {
+		const h = harness();
+		await start(h);
+		const installsAfterStart = h.setFooter.mock.calls.filter(([value]) => value !== undefined).length;
+
+		await command(h, "disable");
+		const footerRemovalsAfterDisable = h.setFooter.mock.calls.filter(([value]) => value === undefined).length;
+		await command(h, "disable");
+		expect(h.setFooter.mock.calls.filter(([value]) => value === undefined).length).toBe(
+			footerRemovalsAfterDisable,
+		);
+
+		await command(h, "enable");
+		await command(h, "enable");
+		expect(h.setFooter.mock.calls.filter(([value]) => value !== undefined).length).toBe(
+			installsAfterStart + 1,
+		);
+		expect(h.setFooter.mock.calls.filter(([value]) => value === undefined).length).toBe(
+			footerRemovalsAfterDisable,
+		);
+
+		// The reconciled footer is exactly the one installed by enable; no extra producer work ran.
+		expect(h.setEditorComponent).toHaveBeenCalledTimes(3);
+	});
+
 	it("closes an enabled sidebar and resize input during shutdown", async () => {
 		const h = harness();
 		await start(h);
@@ -1473,12 +1646,192 @@ describe("extension registration", () => {
 		expect(oldFooter?.requestRender).not.toHaveBeenCalled();
 		const newFooter = mounted[1];
 		expect(newFooter).toBeDefined();
+		// Enable's reconciliation renders once; branch changes afterwards still render exactly once.
+		newFooter?.requestRender.mockClear();
 		newFooter?.branchChange();
 		expect(newFooter?.requestRender).toHaveBeenCalledOnce();
 
 		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
 		expect(newFooter?.unsubscribe).toHaveBeenCalledOnce();
 		expect(oldFooter?.unsubscribe).toHaveBeenCalledOnce();
+	});
+
+	it("binds the image compositor around footer rendering and releases it on disposal", async () => {
+		const h = harness();
+		await start(h);
+		const factory = h.setFooter.mock.calls[0]?.[0];
+		expect(factory).toEqual(expect.any(Function));
+
+		// A renderer stand-in exposing Pi's compositor seam as an own method.
+		const baseCompositor = (lines: string[]) => lines;
+		const renderer = {
+			requestRender: vi.fn(),
+			overlayStack: [] as unknown[],
+			isOverlayVisible: () => false,
+			compositeOverlays: baseCompositor,
+		};
+		const footerData = {
+			getGitBranch: () => undefined,
+			getExtensionStatuses: () => new Map<string, string>(),
+			onBranchChange: () => () => undefined,
+		};
+
+		const footer = factory(renderer, FOOTER_THEME, footerData);
+		expect(renderer.compositeOverlays).not.toBe(baseCompositor);
+		footer.render(120);
+		footer.dispose();
+		// The last client release restores the renderer seam.
+		expect(renderer.compositeOverlays).toBe(baseCompositor);
+	});
+
+	it("releases the image compositor even when footer disposal throws", async () => {
+		const h = harness();
+		await start(h);
+		const factory = h.setFooter.mock.calls[0]?.[0];
+		const baseCompositor = (lines: string[]) => lines;
+		const renderer = {
+			requestRender: vi.fn(),
+			overlayStack: [] as unknown[],
+			isOverlayVisible: () => false,
+			compositeOverlays: baseCompositor,
+		};
+		const footer = factory(renderer, FOOTER_THEME, {
+			getGitBranch: () => undefined,
+			getExtensionStatuses: () => new Map<string, string>(),
+			onBranchChange: () => () => {
+				throw new Error("unsubscribe failed");
+			},
+		});
+
+		expect(() => footer.dispose()).toThrow("unsubscribe failed");
+		// The finally-block release ran despite the throwing disposer.
+		expect(renderer.compositeOverlays).toBe(baseCompositor);
+	});
+	it("moves session identity back to the footer while a selector replaces the editor", async () => {
+		const h = harness();
+		await withPersistedUserConfig({ showSessionRibbon: true }, async () => {
+			await start(h);
+			const { editor, footer } = mountComposer(h);
+			try {
+				const header = editor.render(80)[0];
+				for (const text of ["● READY", "project", "main", "10.0%"]) expect(header).toContain(text);
+				const telemetry = footer.render(80).join("\n");
+				expect(telemetry).toContain("⌥A");
+				for (const text of ["● READY", "project", "main", "10.0%"]) expect(telemetry).not.toContain(text);
+
+				// Pi selectors replace the editor without disposing it or rendering it again.
+				const selectorFooter = footer.render(80).join("\n");
+				// The fork's plain rail carries no workspace item (ribbon-header-only).
+				for (const text of ["● READY", "main", "10.0%"]) expect(selectorFooter).toContain(text);
+
+				expect(editor.render(80)[0]).toContain("● READY");
+				expect(footer.render(80).join("\n")).not.toContain("● READY");
+			} finally {
+				footer.dispose();
+			}
+		});
+	});
+
+	it.each([
+		{ columns: 80, rows: 6 },
+		{ columns: 18, rows: 24 },
+		{ columns: 20, rows: 24 },
+		{ columns: 22, rows: 24 },
+	])("keeps complete context in the footer at $columns×$rows", async ({ columns, rows }) => {
+		const h = harness();
+		await withPersistedUserConfig({ showSessionRibbon: true }, async () => {
+			await start(h);
+			const { tui, editor, footer } = mountComposer(h);
+			try {
+				expect(editor.render(80)[0]).toContain("● READY");
+				footer.render(80);
+				Object.assign(tui.terminal, { columns, rows });
+				expect(editor.render(columns)[0]).not.toContain("● READY");
+				const fallback = footer.render(columns).join("\n");
+				expect(fallback).toContain("● READY");
+				// Compact context renders a whole-number percentage on narrow rails.
+				expect(fallback).toContain("● READY");
+				expect(fallback).toContain("ctx 10");
+
+				Object.assign(tui.terminal, { columns: 80, rows: 24 });
+				expect(editor.render(80)[0]).toContain("10.0%");
+				expect(footer.render(80).join("\n")).not.toContain("10.0%");
+			} finally {
+				footer.dispose();
+			}
+		});
+	});
+
+	it("keeps the plain composer and complete Status Rail by default", async () => {
+		const h = harness();
+		await start(h);
+		const { editor, footer } = mountComposer(h);
+		try {
+			// Default configuration: no header in the top rule, no ribbon glyphs.
+			expect(editor.render(80)[0]).toMatch(/^╭─+╮$/);
+			expect(editor.statusLineVisible).toBe(false);
+
+			const rail = footer.render(80).join("\n");
+			expect(rail).toContain("● READY");
+			expect(rail).toContain("⌥A");
+			expect(rail).not.toContain("\ueb08");
+		} finally {
+			footer.dispose();
+		}
+	});
+
+	it("keeps the complete Status Rail when the editor cannot install", async () => {
+		const h = harness();
+		h.setEditorComponent.mockImplementation(() => {
+			throw new Error("editor install failed");
+		});
+		await start(h);
+
+		// start() swallowed the failure; the footer factory still mounted.
+		const footerFactory = h.setFooter.mock.calls[0]?.[0];
+		expect(footerFactory).toEqual(expect.any(Function));
+		const footer = footerFactory(
+			{ requestRender: vi.fn(), terminal: { rows: 24, columns: 80 } },
+			FOOTER_THEME,
+			{
+				getGitBranch: () => "main",
+				getExtensionStatuses: () => new Map(),
+				onBranchChange: () => () => undefined,
+			},
+		);
+		try {
+			const rail = footer.render(80).join("\n");
+			expect(rail).toContain("● READY");
+			expect(rail).toContain("main");
+		} finally {
+			footer.dispose();
+		}
+	});
+
+	it("reinstalls the ribbon handshake exactly once across disable and enable", async () => {
+		const h = harness();
+		await withPersistedUserConfig({ showSessionRibbon: true }, async () => {
+			await start(h);
+			const { editor, footer } = mountComposer(h);
+			expect(editor.render(80)[0]).toContain("● READY");
+
+			await command(h, "disable");
+			const installsAfterDisable = h.setFooter.mock.calls.filter(([value]) => value !== undefined).length;
+			const editorInstallsAfterDisable = h.setEditorComponent.mock.calls.length;
+
+			await command(h, "enable");
+			// Enable reconciles with one footer and one editor installation.
+			expect(h.setFooter.mock.calls.filter(([value]) => value !== undefined).length).toBe(
+				installsAfterDisable + 1,
+			);
+			expect(h.setEditorComponent.mock.calls.length).toBe(editorInstallsAfterDisable + 1);
+
+			const reinstalled = mountComposer(h);
+			expect(reinstalled.editor.render(80)[0]).toContain("● READY");
+			expect(reinstalled.footer.render(80).join("\n")).not.toContain("● READY");
+			reinstalled.footer.dispose();
+			footer.dispose();
+		});
 	});
 
 	it("stops reporting retired data from a footer that outlives its own removal", async () => {

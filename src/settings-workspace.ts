@@ -184,21 +184,26 @@ function panelWithFocus(
 	];
 }
 
+/**
+ * One pending one-step undo target for the whole workspace. Every mutation
+ * overwrites it; Undo consumes it before restoration so no older cross-domain
+ * slot can become visible.
+ */
+type UndoRecord =
+	| { kind: "display"; value: SessionDisplayOverride | undefined }
+	| { kind: "sidebar"; value: SidebarPanelLayout };
+
 export function createSettingsWorkspace(options: SettingsWorkspaceOptions): SettingsWorkspace {
 	let display = cloneDisplay(options.getDisplaySettings());
 	let focus = 0;
-	let undo: SessionDisplayOverride | undefined;
-	let hasUndo = false;
 	let sidebarDraft: SidebarPanelLayout = (
 		options.getRenderConfig().sidebarPanelLayout ?? DEFAULT_SIDEBAR_PANEL_LAYOUT
 	).map((entry) => ({
 		id: entry.id,
 		visible: entry.visible,
 	}));
-	let sidebarUndo: typeof sidebarDraft | undefined;
-	let hasSidebarUndo = false;
+	let undoRecord: UndoRecord | undefined;
 	let sidebarDirty = false;
-	let lastUndo: "display" | "sidebar" | undefined;
 	let feedback = "";
 	let saving = false;
 	let scrollOffset = 0;
@@ -269,9 +274,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 		display = cloneDisplay(options.getDisplaySettings());
 	};
 	const commitMutation = (next: DisplaySettings, message: string): void => {
-		undo = cloneOverride(options.getSessionDisplayOverride());
-		hasUndo = true;
-		lastUndo = "display";
+		undoRecord = { kind: "display", value: cloneOverride(options.getSessionDisplayOverride()) };
 		const complete = cloneDisplay(next);
 		complete.preset = derivePresetIdentity(complete);
 		options.replaceSessionDisplayOverride(complete);
@@ -280,38 +283,31 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 		request(true);
 	};
 	const recordSidebarUndo = (): void => {
-		sidebarUndo = sidebarDraft.map((entry) => ({ ...entry }));
-		hasSidebarUndo = true;
-		lastUndo = "sidebar";
+		undoRecord = { kind: "sidebar", value: sidebarDraft.map((entry) => ({ ...entry })) };
 	};
 	const revert = (): void => {
-		undo = cloneOverride(options.getSessionDisplayOverride());
-		hasUndo = true;
+		undoRecord = { kind: "display", value: cloneOverride(options.getSessionDisplayOverride()) };
 		options.clearSessionDisplayOverride();
 		refresh();
 		tell("Reverted to Effective lower-layer settings");
 		request(true);
 	};
 	const undoOnce = (): void => {
-		if (lastUndo === "sidebar" && hasSidebarUndo) {
-			sidebarDraft = sidebarUndo?.map((entry) => ({ ...entry })) ?? sidebarDraft;
-			hasSidebarUndo = false;
-			sidebarUndo = undefined;
-			sidebarDirty = true;
-			lastUndo = undefined;
-			tell("Undid the last Sidebar change");
-			request();
-			return;
-		}
-		if (!hasUndo) {
+		if (!undoRecord) {
 			tell("Nothing to undo", "warning");
 			request();
 			return;
 		}
-		options.replaceSessionDisplayOverride(cloneOverride(undo));
-		hasUndo = false;
-		undo = undefined;
-		lastUndo = undefined;
+		const record = undoRecord;
+		undoRecord = undefined;
+		if (record.kind === "sidebar") {
+			sidebarDraft = record.value.map((entry) => ({ ...entry }));
+			sidebarDirty = true;
+			tell("Undid the last Sidebar change");
+			request();
+			return;
+		}
+		options.replaceSessionDisplayOverride(cloneOverride(record.value));
 		refresh();
 		tell("Undid the last Display change");
 		request(true);
@@ -336,8 +332,9 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 			refresh();
 			if (sidebarDirty) {
 				sidebarDirty = false;
-				hasSidebarUndo = false;
-				sidebarUndo = undefined;
+				// The saved draft is the mutation a sidebar record describes; a display
+				// record survives because the sidebar save did not replace it.
+				if (undoRecord?.kind === "sidebar") undoRecord = undefined;
 			}
 			tell("Saved as User default");
 		} catch (error) {
@@ -472,7 +469,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				{ line: "" },
 				actionLine("save", "Save default", saving ? "saving…" : "S"),
 				actionLine("revert", "Revert session", "R"),
-				actionLine("undo", "Undo", hasUndo ? "U" : "—"),
+				actionLine("undo", "Undo", undoRecord ? "U" : "—"),
 			];
 			const segmentLines: LayoutLine[] = [
 				{ line: options.theme.fg("muted", `  ● shown   ○ hidden   ◆ required   order ${provenance.order}`) },

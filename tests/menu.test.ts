@@ -23,8 +23,8 @@ import {
 	renderMenuFrame,
 	type SidebarControls,
 } from "../src/menu.js";
-import { DEFAULT_CONFIG, type DisplayPatch } from "../src/types.js";
 import { getDisplaySettingsViewportHeight } from "../src/settings-workspace.js";
+import { DEFAULT_CONFIG, type DisplayPatch } from "../src/types.js";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -146,6 +146,7 @@ describe("Control Center presentation", () => {
 			[
 				"Display: editorial",
 				"Sidebar on startup: On",
+				"Session ribbon: Off",
 				"Completion notifications: On",
 				"Sidebar tool list: Collapsed",
 				"Back",
@@ -578,5 +579,80 @@ describe("menu actions", () => {
 		h.ctx.ui.confirm.mockResolvedValue(false);
 		await h.actions.compactSession();
 		expect(h.ctx.compact).not.toHaveBeenCalled();
+	});
+});
+
+describe("Session ribbon preference", () => {
+	it("applies, persists, and live-renders the enabled ribbon", async () => {
+		const h = harness();
+		const requestLiveRender = vi.fn();
+		const actions = createMenuActions(
+			h.pi as never,
+			h.ctx as never,
+			h.runtime as never,
+			"/tmp/user.json",
+			h.savePatch,
+			{
+				requestLiveRender,
+			},
+		);
+
+		await actions.setShowSessionRibbon(true);
+
+		expect(h.runtime.getConfig().showSessionRibbon).toBe(true);
+		expect(h.savePatch).toHaveBeenCalledWith("/tmp/user.json", { showSessionRibbon: true });
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Session ribbon enabled", "info");
+		expect(requestLiveRender).toHaveBeenCalled();
+	});
+
+	it("rolls back and live-renders after persistence failure", async () => {
+		const h = harness();
+		const requestLiveRender = vi.fn();
+		const actions = createMenuActions(
+			h.pi as never,
+			h.ctx as never,
+			h.runtime as never,
+			"/tmp/user.json",
+			h.savePatch,
+			{
+				requestLiveRender,
+			},
+		);
+		h.savePatch.mockRejectedValueOnce(new Error("disk full"));
+
+		await actions.setShowSessionRibbon(true);
+
+		// The applied value is rolled back and the composer re-renders without the ribbon.
+		expect(h.runtime.getConfig().showSessionRibbon).toBe(false);
+		expect(requestLiveRender).toHaveBeenCalledTimes(2);
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
+			expect.stringContaining("Session ribbon preference could not be saved: disk full"),
+			"warning",
+		);
+	});
+
+	it("does not notify after a stale ribbon preference completes", async () => {
+		const h = harness();
+		const pending = deferred<void>();
+		let active = true;
+		h.savePatch.mockReturnValue(pending.promise);
+		const actions = createMenuActions(
+			h.pi as never,
+			h.ctx as never,
+			h.runtime as never,
+			"/tmp/user.json",
+			h.savePatch,
+			{
+				lifetime: {
+					isActive: () => active,
+					register: () => () => undefined,
+				},
+			},
+		);
+		const selection = actions.setShowSessionRibbon(true);
+		active = false;
+		pending.resolve();
+		await selection;
+		expect(h.ctx.ui.notify).not.toHaveBeenCalled();
 	});
 });

@@ -112,6 +112,8 @@ export interface AtelierConfig extends DisplaySettings {
 	showSidebarTodos: boolean;
 	showSidebarOnStartup: boolean;
 	sidebarPanelLayout: SidebarPanelLayout;
+	/** User-only opt-in for the composer session ribbon; requires a Nerd Font. */
+	showSessionRibbon: boolean;
 	completionNotifications: boolean;
 }
 
@@ -152,6 +154,8 @@ export interface AtelierState {
 
 /** Footer render input: runtime state plus the live response metrics the runtime does not own. */
 export interface FooterState extends AtelierState {
+	/** Display name of the current workspace directory for the ribbon header. */
+	workspaceLabel?: string;
 	performance?: ResponsePerformance;
 }
 
@@ -178,6 +182,7 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	showSidebarAgent: true,
 	showSidebarTodos: true,
 	showSidebarOnStartup: true,
+	showSessionRibbon: false,
 	sidebarPanelLayout: [
 		{ id: "agent", visible: true },
 		{ id: "activity", visible: true },

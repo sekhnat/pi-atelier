@@ -285,4 +285,126 @@ describe("AtelierRuntime", () => {
 		expect(random).toHaveBeenCalledTimes(2);
 		expect(requestRender).toHaveBeenCalledTimes(4);
 	});
+
+	describe("setEnabled", () => {
+		it("suppresses invalidation, usage scans, scheduling, and publication while disabled", async () => {
+			const { runtime, requestRender, inspectWorkspace } = createRuntime();
+			await runtime.flushWorkspacePulseRefresh();
+			runtime.setEnabled(false);
+			requestRender.mockClear();
+			inspectWorkspace.mockClear();
+
+			runtime.setActivity("working");
+			runtime.refreshUsage();
+			runtime.scheduleWorkspacePulseRefresh();
+			await runtime.flushWorkspacePulseRefresh();
+
+			expect(requestRender).not.toHaveBeenCalled();
+			expect(inspectWorkspace).not.toHaveBeenCalled();
+		});
+
+		it("discards an in-flight inspection result published after disabling", async () => {
+			const pending = deferred<void>();
+			const inspectWorkspace = vi.fn().mockImplementation(() => pending.promise.then(() => cleanInspection));
+			const { runtime, requestRender } = createRuntime(undefined, Math.random, inspectWorkspace);
+			requestRender.mockClear();
+
+			const flushed = runtime.flushWorkspacePulseRefresh();
+			runtime.setEnabled(false);
+			pending.resolve();
+			await flushed;
+
+			expect(runtime.getState().workspacePulse).toMatchObject({ status: "inspecting" });
+			expect(requestRender).not.toHaveBeenCalled();
+		});
+
+		it("exposes retained workspace data as stale on enable until one fresh inspection completes", async () => {
+			const changed = {
+				...cleanInspection,
+				branch: "feature/pulse",
+				snapshot: { ...cleanInspection.snapshot, trackedFiles: 2, linesAdded: 12, linesRemoved: 3 },
+			};
+			const inspectWorkspace = vi.fn().mockResolvedValue(changed);
+			const { runtime, requestRender } = createRuntime(undefined, Math.random, inspectWorkspace);
+			await runtime.flushWorkspacePulseRefresh();
+
+			runtime.setEnabled(false);
+			runtime.setEnabled(true);
+
+			expect(runtime.getState()).toMatchObject({
+				dirty: true,
+				workspacePulse: { status: "stale", data: { branch: "feature/pulse" } },
+			});
+			expect(requestRender).toHaveBeenCalled();
+
+			await runtime.flushWorkspacePulseRefresh();
+			expect(runtime.getState()).toMatchObject({ workspacePulse: { status: "changed" } });
+		});
+
+		it("starts inspecting on enable when no workspace data is retained", async () => {
+			const { runtime } = createRuntime(undefined, Math.random, vi.fn().mockResolvedValue(cleanInspection));
+
+			runtime.setEnabled(false);
+			runtime.setEnabled(true);
+
+			expect(runtime.getState().workspacePulse).toEqual({ status: "inspecting" });
+
+			await runtime.flushWorkspacePulseRefresh();
+			expect(runtime.getState()).toMatchObject({ workspacePulse: { status: "clean" } });
+		});
+
+		it("treats repeated transitions to the current state as no-ops", async () => {
+			const { runtime, requestRender, inspectWorkspace } = createRuntime();
+			requestRender.mockClear();
+			await runtime.flushWorkspacePulseRefresh();
+
+			runtime.setEnabled(false);
+			runtime.setEnabled(false);
+			runtime.setEnabled(true);
+			runtime.setEnabled(true);
+
+			expect(inspectWorkspace).toHaveBeenCalledTimes(1);
+			// One render for the initial flush plus one for the stale-on-enable reconciliation.
+			expect(requestRender).toHaveBeenCalledTimes(2);
+			expect(runtime.getState().workspacePulse).toMatchObject({ status: "stale" });
+		});
+
+		it("does not schedule or publish Pulse work for an untrusted project", async () => {
+			const requestRender = vi.fn();
+			const ctx = {
+				model: { id: "model", provider: "provider", reasoning: true },
+				modelRegistry: { isUsingOAuth: vi.fn().mockReturnValue(false) },
+				getContextUsage: vi.fn().mockReturnValue(undefined),
+				isProjectTrusted: vi.fn().mockReturnValue(false),
+				sessionManager: { getEntries: vi.fn().mockReturnValue([]) },
+			};
+			const inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection);
+			const runtime = new AtelierRuntime({
+				pi: { exec: vi.fn() } as never,
+				ctx: ctx as never,
+				config: DEFAULT_CONFIG,
+				autoCompact: true,
+				requestRender,
+				inspectWorkspace,
+			});
+			requestRender.mockClear();
+
+			runtime.setEnabled(false);
+			runtime.setEnabled(true);
+
+			expect(runtime.getState().workspacePulse).toEqual({ status: "unavailable" });
+			runtime.scheduleWorkspacePulseRefresh();
+			await runtime.flushWorkspacePulseRefresh();
+			expect(inspectWorkspace).not.toHaveBeenCalled();
+			expect(requestRender).not.toHaveBeenCalled();
+		});
+	});
 });
+
+function deferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}

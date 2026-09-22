@@ -16,7 +16,8 @@ import {
 } from "../src/completion-notifier.js";
 import { loadConfig, saveUserConfigPatch } from "../src/config.js";
 import { AtelierEditor } from "../src/editor.js";
-import { createFooterComponent, type ThemeLike } from "../src/footer.js";
+import { type AtelierFooterComponent, createFooterComponent, type ThemeLike } from "../src/footer.js";
+import { createImageCompositorBinding } from "../src/image-compositor.js";
 import {
 	type DisplaySettingsRuntime,
 	type OverlayLifetime,
@@ -32,10 +33,10 @@ import {
 	type SidebarSnapshot,
 } from "../src/sidebar.js";
 import {
-	resolveEffectiveSidebarPanelLayout,
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	createSidebarPanelRegistry,
 	isSidebarPanelContributionId,
+	resolveEffectiveSidebarPanelLayout,
 	type SidebarPanelRegistry,
 } from "../src/sidebar-panels.js";
 import { AtelierRuntime, createInertAtelierState } from "../src/state.js";
@@ -532,13 +533,17 @@ export default function atelierExtension(
 		const retiredState = targetSession.retiredState;
 		const retiredConfig = targetSession.retiredConfig;
 		if (ctx.mode !== "tui") return;
+		let editor: AtelierEditor | undefined;
+		let footer: AtelierFooterComponent | undefined;
+		let headerRendered = false;
+		let editorInstalled = false;
+		const getCurrentSession = (): ActiveSession | undefined => {
+			const current = activeSession;
+			return enabled && current?.token === token && current.footerGeneration === generation
+				? current
+				: undefined;
+		};
 		ctx.ui.setFooter((tui, theme, footerData) => {
-			const getCurrentSession = (): ActiveSession | undefined => {
-				const current = activeSession;
-				return enabled && current?.token === token && current.footerGeneration === generation
-					? current
-					: undefined;
-			};
 			const footerRequestRender = (): void => {
 				if (getCurrentSession()) tui.requestRender();
 			};
@@ -554,6 +559,7 @@ export default function atelierExtension(
 					const performance = currentSession.runActivity.getSnapshot().performance;
 					return {
 						...currentSession.runtime.getState(),
+						workspaceLabel: basename(currentSession.ctx.cwd),
 						...(branch ? { branch } : {}),
 						...(performance ? { performance } : {}),
 						extensionStatuses: currentSession.extensionStatuses,
@@ -571,15 +577,61 @@ export default function atelierExtension(
 					}),
 				theme: theme as unknown as ThemeLike,
 			});
+			footer = component;
+			const imageCompositor = createImageCompositorBinding(tui);
+			const renderFooter = component.render;
+			component.render = (width: number) => {
+				imageCompositor.sync();
+				// Selectors can temporarily replace the editor without disposing it.
+				const promptVisible = editorInstalled && headerRendered && editor?.statusLineVisible;
+				headerRendered = false;
+				return promptVisible ? component.renderTelemetry(width) : renderFooter(width);
+			};
+			const disposeFooter = component.dispose;
+			component.dispose = () => {
+				try {
+					if (editor) delete editor.renderStatusLine;
+					editor = undefined;
+					editorInstalled = false;
+					disposeFooter();
+				} finally {
+					imageCompositor.dispose();
+				}
+			};
 			const mounted = getCurrentSession();
 			if (mounted) mounted.footerDisposer = component.dispose;
 			else component.dispose();
 			return component;
 		});
 		try {
-			ctx.ui.setEditorComponent((tui, theme, keybindings) => new AtelierEditor(tui, theme, keybindings));
+			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
+				const next = new AtelierEditor(tui, theme, keybindings);
+				next.renderStatusLine = (width: number) => {
+					// The ribbon is an explicit user opt-in; the plain Status Rail is the
+					// default. Fullscreen Pi crops the top of a tall draft after editor
+					// rendering, so short terminals keep essential state in the footer.
+					const enabledSession = getCurrentSession();
+					const line =
+						enabledSession && enabledSession.runtime.getConfig().showSessionRibbon && tui.terminal.rows >= 12
+							? (footer?.renderHeader(width) ?? "")
+							: "";
+					headerRendered = Boolean(line);
+					return line;
+				};
+				editor = next;
+				return next;
+			});
+			editorInstalled = true;
 		} catch {
 			// Composer framing is optional; the Status Rail should still install.
+			if (editor) delete editor.renderStatusLine;
+			editor = undefined;
+			editorInstalled = false;
+			try {
+				ctx.ui.setEditorComponent(undefined);
+			} catch {
+				// Pi may also reject restoration; leave the complete footer available.
+			}
 		}
 	}
 
@@ -636,7 +688,16 @@ export default function atelierExtension(
 					ctx.ui.notify("Pi Atelier is not active in this session", "warning");
 					return;
 				}
+				if (!enabled) {
+					ctx.ui.notify("Pi Atelier disabled", "info");
+					return;
+				}
 				enabled = false;
+				// Suspend runtime producers first so no pending work publishes after the UI is hidden.
+				current.runtime.setEnabled(false);
+				current.runActivity.resetResponse();
+				current.completionNotifier.reset();
+				current.todos = [];
 				current.sidebar.hide();
 				updateExtensionStatuses(current, []);
 				clearFooter(current, true);
@@ -649,9 +710,15 @@ export default function atelierExtension(
 					ctx.ui.notify("Pi Atelier is not active in this session", "warning");
 					return;
 				}
-				enabled = true;
-				installFooter(current);
 				ctx.ui.notify("Pi Atelier enabled", "info");
+				if (enabled) return;
+				enabled = true;
+				current.runtime.setEnabled(true);
+				current.todos = reconstructTodos(current.ctx);
+				current.runtime.refreshUsage();
+				installFooter(current);
+				requestAllRenders(current);
+				void current.runtime.flushWorkspacePulseRefresh();
 				return;
 			}
 			await openMenu(ctx);
@@ -891,7 +958,7 @@ export default function atelierExtension(
 
 	pi.on("session_tree", (_event, ctx) => {
 		const current = getActiveSession(ctx);
-		if (!current) return;
+		if (!current || !enabled) return;
 		current.todos = reconstructTodos(ctx);
 		requestAllRenders(current);
 	});
@@ -911,19 +978,27 @@ export default function atelierExtension(
 		current.runtime.scheduleWorkspacePulseRefresh();
 	});
 	pi.on("before_provider_request", (_event, ctx) => {
-		getActiveSession(ctx)?.runActivity.startResponse();
+		const current = getActiveSession(ctx);
+		if (!current || !enabled) return;
+		current.runActivity.startResponse();
 	});
 	pi.on("message_update", (event, ctx) => {
+		if (!enabled) return;
 		const estimatedOutputTokens = estimateTokens(event.message);
 		if (estimatedOutputTokens <= 0) return;
 		getActiveSession(ctx)?.runActivity.updateResponseEstimate(estimatedOutputTokens);
 	});
 	pi.on("message_end", (event, ctx) => {
 		if (event.message.role !== "assistant") return;
-		getActiveSession(ctx)?.runActivity.finishResponse(event.message.usage.output);
+		const current = getActiveSession(ctx);
+		if (!current || !enabled) return;
+		current.runActivity.finishResponse(event.message.usage.output);
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
-		getActiveSession(ctx)?.runActivity.startTool(event);
+		const current = getActiveSession(ctx);
+		if (!current) return;
+		// Disabled intervals keep tool bookkeeping but omit observed arguments.
+		current.runActivity.startTool(enabled ? event : { ...event, args: undefined });
 	});
 	pi.on("tool_execution_end", (event, ctx) => {
 		const current = getActiveSession(ctx);
@@ -935,7 +1010,7 @@ export default function atelierExtension(
 	pi.on("tool_result", (event, ctx) => {
 		if (event.toolName !== "todo") return;
 		const current = getActiveSession(ctx);
-		if (!current || event.isError) return;
+		if (!current || event.isError || !enabled) return;
 
 		const rawItems = getTodoItems(event.details);
 		if (!rawItems) return;
@@ -958,6 +1033,7 @@ export default function atelierExtension(
 		if (!current || !ctx.isIdle()) return;
 		current.runActivity.settle();
 		current.runtime.setActivity("ready");
+		if (!enabled) return;
 		current.sidebar.requestRender();
 		current.completionNotifier.turnSettled(
 			completionNotification(current.ctx, "turn-settled", current.runActivity.getSnapshot()),

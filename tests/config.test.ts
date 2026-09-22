@@ -394,3 +394,71 @@ describe("configuration", () => {
 		});
 	});
 });
+
+describe("showSessionRibbon preference", () => {
+	it("defaults to off with the complete Status Rail remaining authoritative", () => {
+		const result = validateConfig({});
+		expect(result.config.showSessionRibbon).toBe(false);
+		expect(result.warnings).toEqual([]);
+	});
+
+	it("applies an enabled ribbon only from user configuration", async () => {
+		await writeJson(userPath, { showSessionRibbon: true });
+		await writeJson(projectPath, { showSessionRibbon: false });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSessionRibbon: false },
+		});
+		// Trusted project and session values are validated but never override the user.
+		expect(result.config.showSessionRibbon).toBe(true);
+	});
+
+	it("retains the user value when project and session layers disagree", async () => {
+		await writeJson(userPath, { showSessionRibbon: false });
+		await writeJson(projectPath, { showSessionRibbon: true });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSessionRibbon: true },
+		});
+		expect(result.config.showSessionRibbon).toBe(false);
+		expect(result.warnings).not.toContain("showSessionRibbon must be boolean");
+	});
+
+	it("warns on malformed values in every layer without applying them", async () => {
+		await writeJson(userPath, { showSessionRibbon: "on" });
+		await writeJson(projectPath, { showSessionRibbon: "yes" });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSessionRibbon: 1 },
+		});
+		expect(result.config.showSessionRibbon).toBe(false);
+		expect(result.warnings.filter((warning) => warning === "showSessionRibbon must be boolean")).toHaveLength(
+			1,
+		);
+		// Deduplicated warnings keep one actionable message per unique violation.
+		expect(result.warnings).toContain("showSessionRibbon must be boolean");
+	});
+
+	it("keeps custom-base ribbon values when user input omits them", () => {
+		const base = { ...DEFAULT_CONFIG, showSessionRibbon: true };
+		const result = validateConfig({ shortcut: "ctrl+x" }, base);
+		expect(result.config.showSessionRibbon).toBe(true);
+	});
+});
+
+describe("session ribbon persistence", () => {
+	it("patches the ribbon preference without losing unknown fields", async () => {
+		await writeJson(userPath, { futureSetting: "keep" });
+		await saveUserConfigPatch(userPath, { showSessionRibbon: true });
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({
+			futureSetting: "keep",
+			showSessionRibbon: true,
+		});
+	});
+});
